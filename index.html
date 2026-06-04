@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Calgary Transit — live</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    html, body, #map { height: 100%; margin: 0; }
+    #cap { position: absolute; z-index: 1000; top: 8px; left: 50px;
+           background: #fff; padding: 4px 8px; border-radius: 4px;
+           font: 13px sans-serif; box-shadow: 0 1px 4px rgba(0,0,0,.3); }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <div id="cap">loading…</div>
+  <script>
+    // The page is served by the backend, so the API lives at the same origin.
+    const API = location.origin;
+    const REFRESH_MS = 15000;
+
+    const map = L.map('map', { preferCanvas: true }).setView([51.05, -114.07], 11);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+      { maxZoom: 19, attribution: '&copy; OpenStreetMap' }).addTo(map);
+
+    // Draw the static network once.
+    async function loadNetwork() {
+      const net = await (await fetch(API + '/api/network')).json();
+      net.shapes.forEach(s =>
+        L.polyline(s.coords, { color: s.color, weight: 2, opacity: 0.4 }).addTo(map));
+    }
+
+    // Keep ONE marker per vehicle id, so each refresh MOVES it instead of
+    // recreating it. This persistence is what makes interpolation possible later.
+    const markers = {};
+
+    async function refresh() {
+      try {
+        const data = await (await fetch(API + '/api/vehicles')).json();
+        const seen = new Set();
+
+        data.vehicles.forEach(v => {
+          const [lat, lon, short, color, head, id, type] = v;
+          seen.add(id);
+          if (markers[id]) {
+            markers[id].setLatLng([lat, lon]);           // move existing
+          } else {
+            markers[id] = L.circleMarker([lat, lon], {   // create new
+              radius: 5, fillColor: color, color: '#fff', weight: 1.5, fillOpacity: 1
+            }).bindPopup('<b>Route ' + short + '</b> (' + type + ')<br>' +
+                         (head ? 'to ' + head + '<br>' : '') + 'vehicle ' + id).addTo(map);
+          }
+        });
+
+        // Drop vehicles that left the feed (finished trips, lost GPS).
+        Object.keys(markers).forEach(id => {
+          if (!seen.has(id)) { map.removeLayer(markers[id]); delete markers[id]; }
+        });
+
+        document.getElementById('cap').textContent =
+          data.vehicles.length + ' vehicles · snapshot ' + data.age +
+          's old · refreshed ' + new Date().toLocaleTimeString();
+      } catch (e) {
+        document.getElementById('cap').textContent = 'fetch error: ' + e;
+      }
+    }
+
+    loadNetwork();
+    refresh();
+    setInterval(refresh, REFRESH_MS);
+  </script>
+</body>
+</html>
