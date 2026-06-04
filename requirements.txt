@@ -1,0 +1,3 @@
+requests>=2.31
+gtfs-realtime-bindings>=1.0.0
+protobuf>=4.21
