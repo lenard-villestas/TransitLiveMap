@@ -11,17 +11,19 @@ shape of the live data before you build anything around it:
 Run it:   python explore_feed.py
 """
 
+import argparse
 import sys
 import time
+from math import radians, sin, cos, asin, sqrt
 
 import requests
 from google.transit import gtfs_realtime_pb2
 from google.protobuf.descriptor import FieldDescriptor
 
 # Calgary Transit GTFS-realtime vehicle positions.
-# If this 404s or times out, try the https:// variant, and check the City's
-# info page: https://data.calgary.ca/stories/s/u45n-7awa/
-FEED_URL = "http://transitdata.calgary.ca/ctransit/vehiclepositions.pb"
+# NOTE: use https — the plain http (port 80) endpoint times out.
+# City info page: https://data.calgary.ca/stories/s/u45n-7awa/
+FEED_URL = "https://data.calgary.ca/download/am7c-qe3u/application%2Foctet-stream"
 
 
 # --- Part 1 + 2: poll and decode -------------------------------------------
@@ -110,13 +112,88 @@ def show_schema():
     print()
 
 
+# --- Part 5: --watch — see it move in the terminal -------------------------
+
+def haversine(lat1, lon1, lat2, lon2):
+    """Great-circle distance between two lat/lon points, in metres."""
+    r = 6_371_000  # Earth radius (m)
+    dlat, dlon = radians(lat2 - lat1), radians(lon2 - lon1)
+    a = sin(dlat / 2) ** 2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlon / 2) ** 2
+    return 2 * r * asin(sqrt(a))
+
+
+def find_vehicle(feed, vehicle_id):
+    for e in feed.entity:
+        if e.HasField("vehicle") and e.vehicle.vehicle.id == vehicle_id:
+            return e.vehicle
+    return None
+
+
+def watch(url, interval, vehicle_id=None):
+    """Poll the feed on a timer and print what changed each tick."""
+    target = f"vehicle {vehicle_id}" if vehicle_id else "the whole fleet"
+    print(f"Watching {target} via {url}")
+    print(f"Polling every {interval}s — press Ctrl+C to stop.\n")
+
+    last = None  # last (lat, lon) for the followed vehicle
+    tick = 0
+    while True:
+        tick += 1
+        stamp = time.strftime("%H:%M:%S")
+        try:
+            feed = fetch_feed(url)
+        except Exception as exc:
+            print(f"[{stamp}] poll failed ({exc}) — retrying next tick")
+            time.sleep(interval)
+            continue
+
+        if vehicle_id:
+            v = find_vehicle(feed, vehicle_id)
+            if v is None:
+                print(f"[{stamp}] vehicle {vehicle_id} not in this snapshot")
+            else:
+                p = v.position
+                moved = ""
+                if last is not None:
+                    d = haversine(last[0], last[1], p.latitude, p.longitude)
+                    moved = f"   moved +{d:6.1f} m"
+                last = (p.latitude, p.longitude)
+                print(f"[{stamp}] route {v.trip.route_id:<5} "
+                      f"{p.latitude:.5f}, {p.longitude:.5f}  "
+                      f"bearing {p.bearing:5.1f}°  speed {p.speed:5.1f}{moved}")
+        else:
+            vehicles = [e.vehicle for e in feed.entity if e.HasField("vehicle")]
+            routes = {v.trip.route_id for v in vehicles if v.trip.route_id}
+            sample = ", ".join(f"{v.vehicle.id}@{v.trip.route_id}" for v in vehicles[:5])
+            print(f"[{stamp}] tick {tick:>3} | {len(vehicles):>4} vehicles | "
+                  f"{len(routes):>3} routes | {sample}")
+
+        time.sleep(interval)
+
+
 # --- main -------------------------------------------------------------------
 
 def main():
-    # The schema works offline (it's baked into the bindings), so print it
-    # even if the network call fails.
+    ap = argparse.ArgumentParser(description="Explore the Calgary Transit realtime feed.")
+    ap.add_argument("--watch", action="store_true",
+                    help="poll continuously instead of running once")
+    ap.add_argument("--interval", type=int, default=10,
+                    help="seconds between polls when watching (default 10)")
+    ap.add_argument("--vehicle", metavar="ID",
+                    help="follow a single vehicle id and show how far it moves")
+    ap.add_argument("--url", default=FEED_URL, help="override the feed URL")
+    args = ap.parse_args()
+
+    if args.watch:
+        try:
+            watch(args.url, args.interval, args.vehicle)
+        except KeyboardInterrupt:
+            print("\nStopped.")
+        return
+
+    # One-shot mode: summary (needs network) + schema (works offline).
     try:
-        feed = fetch_feed()
+        feed = fetch_feed(args.url)
         summarize(feed)
     except Exception as exc:
         print(f"[!] Could not fetch live feed: {exc}", file=sys.stderr)
