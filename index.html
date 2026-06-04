@@ -11,10 +11,9 @@
     #cap { position: absolute; z-index: 1000; top: 8px; left: 50px;
            background: #fff; padding: 4px 8px; border-radius: 6px;
            font: 13px system-ui, sans-serif; box-shadow: 0 1px 4px rgba(0,0,0,.25); }
-    /* the vehicle marker: a route-colored badge with a white glyph */
-    .veh-badge { width: 22px; height: 22px; border-radius: 50%;
-                 display: flex; align-items: center; justify-content: center;
-                 border: 2px solid #fff; box-shadow: 0 1px 3px rgba(0,0,0,.45); }
+    .veh-icon img { width: 28px; height: 28px; display: block;
+                    transition: transform .25s linear;   /* smooth turning */
+                    filter: drop-shadow(0 1px 2px rgba(0,0,0,.4)); }
   </style>
 </head>
 <body>
@@ -24,44 +23,65 @@
     const API = location.origin;
     const REFRESH_MS = 15000;
 
-    // --- map: minimal light basemap so transit stands out -------------------
-    const map = L.map('map', { zoomControl: true }).setView([51.05, -114.07], 11);
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
-      maxZoom: 19, subdomains: 'abcd',
-      attribution: '&copy; OpenStreetMap &copy; CARTO'
-    }).addTo(map);
-
-    // --- icons: bus vs train glyph, colored by route ------------------------
-    const BUS = '<svg viewBox="0 0 24 24" width="12" height="12"><path fill="#fff" d="M6 4h12a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2v1a1 1 0 0 1-2 0v-1H8v1a1 1 0 0 1-2 0v-1a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zm0 3v4h12V7H6zm1.5 6a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm9 0a1 1 0 1 0 0 2 1 1 0 0 0 0-2z"/></svg>';
-    const TRAIN = '<svg viewBox="0 0 24 24" width="12" height="12"><path fill="#fff" d="M7 3h10a2 2 0 0 1 2 2v9a3 3 0 0 1-3 3l1.5 2h-2l-1.4-2H9.9L8.5 19h-2L8 17a3 3 0 0 1-3-3V5a2 2 0 0 1 2-2zm0 3v5h10V6H7zm2 7a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm6 0a1 1 0 1 0 0 2 1 1 0 0 0 0-2z"/></svg>';
-
-    function iconFor(type, color) {
-      const isTrain = /tram|lrt|rail|subway/i.test(type);
-      const html = '<div class="veh-badge" style="background:' + color + '">' +
-                   (isTrain ? TRAIN : BUS) + '</div>';
-      return L.divIcon({ html, className: '', iconSize: [22, 22],
-                         iconAnchor: [11, 11], popupAnchor: [0, -12] });
+    // Each icon image has a "forward" direction baked in. To point it along a
+    // travel bearing B (0=N, clockwise), we rotate by (B - forward).
+    const ICONS = {
+      bus:   { url: '/static/bus.png',   forward: 90  },  // head points east
+      train: { url: '/static/train.png', forward: 135 },  // head points south-east
+    };
+    function kindFor(type) {
+      return /tram|lrt|rail|subway/i.test(type) ? 'train' : 'bus';
+    }
+    function makeIcon(kind) {
+      return L.divIcon({
+        html: '<div class="veh-icon"><img src="' + ICONS[kind].url + '"></div>',
+        className: '', iconSize: [28, 28], iconAnchor: [14, 14], popupAnchor: [0, -14]
+      });
     }
 
-    // --- static network (drawn once) ----------------------------------------
+    // --- minimal basemap ----------------------------------------------------
+    const map = L.map('map').setView([51.05, -114.07], 11);
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+      maxZoom: 19, subdomains: 'abcd', attribution: '&copy; OpenStreetMap &copy; CARTO'
+    }).addTo(map);
+
+    const shapeLayer = L.layerGroup().addTo(map);
+    const stopLayer = L.layerGroup();             // off by default (toggle in control)
+    const stopRenderer = L.canvas({ padding: 0.5 });
+    L.control.layers(null, { 'Route shapes': shapeLayer, 'Stops': stopLayer }).addTo(map);
+
     async function loadNetwork() {
       const net = await (await fetch(API + '/api/network')).json();
       net.shapes.forEach(s =>
-        L.polyline(s.coords, { color: s.color, weight: 1.5, opacity: 0.3 }).addTo(map));
+        L.polyline(s.coords, { color: s.color, weight: 1.5, opacity: 0.3 }).addTo(shapeLayer));
+      net.stops.forEach(s =>
+        L.circleMarker([s[0], s[1]], { renderer: stopRenderer, radius: 2,
+          color: '#64748b', weight: 0, fillOpacity: 0.7 }).bindPopup(s[2]).addTo(stopLayer));
     }
 
-    // --- animation state ----------------------------------------------------
-    // For each vehicle we remember where it's gliding FROM, TO, when it started,
-    // and how long the glide should take (auto-tuned to its real update cadence).
+    // --- bearing from two points (planar approx is fine for short hops) ------
+    function bearingDeg(lat1, lon1, lat2, lon2) {
+      const dy = lat2 - lat1;
+      const dx = (lon2 - lon1) * Math.cos((lat1 + lat2) / 2 * Math.PI / 180);
+      return (Math.atan2(dx, dy) * 180 / Math.PI + 360) % 360;   // 0=N, clockwise
+    }
+
+    // --- animation engine ---------------------------------------------------
     const veh = {};
     const lerp = (a, b, t) => a + (b - a) * t;
 
-    // The render loop: runs ~60x/sec, independent of the 15s data fetches.
+    function setRotation(v) {
+      const el = v.marker.getElement();
+      if (!el) return;
+      const img = el.querySelector('img');
+      if (img) img.style.transform = 'rotate(' + (v.bearing - v.forward) + 'deg)';
+    }
+
     function animate() {
       const now = performance.now();
       for (const id in veh) {
         const v = veh[id];
-        if (v.settled) continue;                 // reached target; skip until new data
+        if (v.settled) continue;
         const t = v.dur ? Math.min((now - v.startT) / v.dur, 1) : 1;
         v.marker.setLatLng([lerp(v.fromLat, v.toLat, t), lerp(v.fromLon, v.toLon, t)]);
         if (t >= 1) v.settled = true;
@@ -70,7 +90,6 @@
     }
     requestAnimationFrame(animate);
 
-    // --- data fetch: set new glide targets ----------------------------------
     async function refresh() {
       try {
         const data = await (await fetch(API + '/api/vehicles')).json();
@@ -80,26 +99,31 @@
         data.vehicles.forEach(arr => {
           const [lat, lon, short, color, head, id, type] = arr;
           seen.add(id);
+          const kind = kindFor(type);
           let v = veh[id];
 
-          if (!v) {                              // new vehicle
-            const marker = L.marker([lat, lon], { icon: iconFor(type, color) })
+          if (!v) {
+            const marker = L.marker([lat, lon], { icon: makeIcon(kind) })
               .bindPopup('<b>Route ' + short + '</b> (' + type + ')<br>' +
                          (head ? 'to ' + head + '<br>' : '') + 'vehicle ' + id)
               .addTo(map);
-            veh[id] = { marker, fromLat: lat, fromLon: lon, toLat: lat, toLon: lon,
+            veh[id] = { marker, forward: ICONS[kind].forward, bearing: ICONS[kind].forward,
+                        fromLat: lat, fromLon: lon, toLat: lat, toLon: lon,
                         startT: now, dur: REFRESH_MS, settled: true };
-          } else if (lat !== v.toLat || lon !== v.toLon) {   // position actually changed
-            const cur = v.marker.getLatLng();    // start from where it visually IS now
+          } else if (lat !== v.toLat || lon !== v.toLon) {
+            const cur = v.marker.getLatLng();
+            v.bearing = bearingDeg(cur.lat, cur.lng, lat, lon);  // face travel direction
+            setRotation(v);
             v.fromLat = cur.lat; v.fromLon = cur.lng;
             v.toLat = lat; v.toLon = lon;
-            // glide duration = real gap since this vehicle last moved (clamped)
-            v.dur = v.lastMove ? Math.min(Math.max(now - v.lastMove, 5000), 35000) : REFRESH_MS;
+            // Glide over the real gap since this vehicle last moved, but never so
+            // briefly that it freezes long before the next update arrives.
+            v.dur = v.lastMove ? Math.min(Math.max(now - v.lastMove, 12000), 40000) : REFRESH_MS;
             v.startT = now; v.lastMove = now; v.settled = false;
           }
         });
 
-        for (const id in veh) {                  // drop vehicles that left the feed
+        for (const id in veh) {
           if (!seen.has(id)) { map.removeLayer(veh[id].marker); delete veh[id]; }
         }
 

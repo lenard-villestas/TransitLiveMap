@@ -18,6 +18,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from explore_feed import fetch_feed, FEED_URL
 from build_map import (get_gtfs_zip, load_lookups, build_shapes,
@@ -81,6 +82,11 @@ app = FastAPI(lifespan=lifespan)
 # Allow a separately-hosted frontend (e.g. Vite on :5173) to call us later.
 app.add_middleware(CORSMiddleware, allow_origins=["*"],
                    allow_methods=["*"], allow_headers=["*"])
+
+# Serve icon images (bus.png, train.png, ...) from ./static
+STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
+os.makedirs(STATIC_DIR, exist_ok=True)
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
 @app.get("/api/network")
