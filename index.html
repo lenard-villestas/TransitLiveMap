@@ -30,6 +30,19 @@
       box-shadow: 0 1px 4px rgba(0, 0, 0, .25);
     }
 
+    #zoomcap {
+      position: absolute;
+      z-index: 1000;
+      bottom: 14px;
+      left: 10px;
+      background: #fff;
+      padding: 3px 8px;
+      border-radius: 6px;
+      font: 12px system-ui, sans-serif;
+      color: #334155;
+      box-shadow: 0 1px 4px rgba(0, 0, 0, .25);
+    }
+
     .veh-icon img {
       width: 28px;
       height: 28px;
@@ -230,11 +243,14 @@
 <body>
   <div id="map"></div>
   <div id="cap">loading…</div>
+  <div id="zoomcap"></div>
   <div id="trackbar">Tracking <span id="trackinfo"></span><button id="followbtn" onclick="resumeFollow()" style="display:none">follow</button><button onclick="stopTracking()">stop</button></div>
   <script>
     const API = location.origin;
     const REFRESH_MS = 15000;
     const FOLLOW_MS = 200;   // throttle follow-cam pans (~5 Hz) so markercluster doesn't thrash
+    const DISABLE_CLUSTER_ZOOM = 16;   // at/above this zoom, stops show individually (no clusters)
+    const ARRIVE_M = 120;    // tracked bus within this many metres of the stop → "due"
 
     // bus-stop.png is a downward map-pin → anchor at the bottom tip. divIcon (not
     // L.icon) so we can toggle a .selected class to glow the tracked bus's stop.
@@ -253,11 +269,14 @@
     let lastPan = null;                 // last latlng we follow-panned to
     let lastFollowT = 0;                // last follow-cam pan time (throttle)
     let hereMarker = null;              // "you are here" dot
+    let selectedStopMarker = null;      // standalone glowing pin shown while tracking
+    let clusterWasOn = false;           // was the stop cluster on the map before tracking?
 
     // stops clustered into themed red counted badges (replaces the old zoom-gate)
     const stopCluster = L.markerClusterGroup({
       chunkedLoading: true,
       maxClusterRadius: 60,
+      disableClusteringAtZoom: DISABLE_CLUSTER_ZOOM,   // tune this to taste (see #zoomcap)
       iconCreateFunction: cluster => {
         const n = cluster.getChildCount();
         const size = n < 10 ? 'sm' : n < 100 ? 'md' : 'lg';
@@ -295,6 +314,14 @@
     map.addLayer(stopCluster);                    // stops shown (clustered) by default
     L.control.layers(null, { 'Route shapes': shapeLayer, 'Stops': stopCluster }).addTo(map);
 
+    // live zoom readout — watch this to pick a DISABLE_CLUSTER_ZOOM you like
+    function updateZoomCap() {
+      document.getElementById('zoomcap').textContent =
+        'zoom ' + map.getZoom() + ' · cluster < ' + DISABLE_CLUSTER_ZOOM;
+    }
+    map.on('zoomend', updateZoomCap);
+    updateZoomCap();
+
     async function loadNetwork() {
       const net = await (await fetch(API + '/api/network')).json();
       net.shapes.forEach(s =>
@@ -306,12 +333,6 @@
         stopMarkers.set(sid, m);
         stopCluster.addLayer(m);
       });
-    }
-
-    // highlight (or clear) the stop pin whose bus is being tracked
-    function highlightStop(stopId, on) {
-      const m = stopMarkers.get(stopId);
-      if (m) m.setIcon(stopDiv(on));
     }
 
     // --- stop ETA popup -----------------------------------------------------
@@ -450,11 +471,18 @@
     }
 
     // --- tracking: follow + flash + live ETA bubble -------------------------
-    function bubbleText(epoch) {
-      const secs = epoch - Date.now() / 1000;
-      if (secs <= -60) return 'departed';
-      if (secs <= 30) return 'due';
-      return Math.round(secs / 60) + ' min';
+    // text + live distance for the tracked bus. "due" is gated on real proximity,
+    // not the (drifty, optimistic) predicted-arrival clock.
+    function trackedBubble() {
+      const v = tracked && veh[tracked.id];
+      const secs = tracked ? tracked.arrivalEpoch - Date.now() / 1000 : 0;
+      const dist = (v && tracked.stopLatLng) ? v.marker.getLatLng().distanceTo(tracked.stopLatLng) : null;
+      let text;
+      if (dist != null && dist <= ARRIVE_M) { tracked.wasNear = true; text = 'due'; }
+      else if (tracked && tracked.wasNear && dist != null && dist > ARRIVE_M) text = 'departed';
+      else if (secs <= 0) text = '<1 min';   // prediction passed but bus still away
+      else text = Math.round(secs / 60) + ' min';
+      return { text, dist };
     }
 
     function wrapperOf(id) {
@@ -474,10 +502,18 @@
         stopLatLng: sm ? sm.getLatLng() : null, following: true
       };
       lastPan = null;
-      highlightStop(stopId, true);            // glow the stop being served
+      // declutter: hide all other stops, show only this one as a standalone glowing
+      // pin (so it's always visible and never collapses into a cluster while following)
+      clusterWasOn = map.hasLayer(stopCluster);
+      if (clusterWasOn) map.removeLayer(stopCluster);
+      if (tracked.stopLatLng) {
+        selectedStopMarker = L.marker(tracked.stopLatLng, {
+          icon: stopDiv(true), interactive: false, keyboard: false
+        }).addTo(map);
+      }
       const w = wrapperOf(id);
       if (w) w.classList.add('tracked');
-      veh[id].marker.bindTooltip(bubbleText(a.arrival),
+      veh[id].marker.bindTooltip(trackedBubble().text,
         { permanent: true, direction: 'top', offset: [0, -18], className: 'eta-bubble' }).openTooltip();
       map.closePopup();
       etaTimer = setInterval(updateBubble, 1000);
@@ -487,8 +523,11 @@
     // Full teardown. snapBack=true flies the camera back to the selected stop.
     function untrack(snapBack) {
       if (etaTimer) { clearInterval(etaTimer); etaTimer = null; }
+      // restore the decluttered stops
+      if (selectedStopMarker) { map.removeLayer(selectedStopMarker); selectedStopMarker = null; }
+      if (clusterWasOn && !map.hasLayer(stopCluster)) map.addLayer(stopCluster);
+      clusterWasOn = false;
       if (tracked) {
-        highlightStop(tracked.stopId, false);
         if (veh[tracked.id]) {
           veh[tracked.id].marker.unbindTooltip();
           const w = wrapperOf(tracked.id);
@@ -518,7 +557,7 @@
       // doesn't exist until follow-cam pans an off-screen bus into view.
       const w = wrapperOf(tracked.id);
       if (w && !w.classList.contains('tracked')) w.classList.add('tracked');
-      const txt = bubbleText(tracked.arrivalEpoch);
+      const txt = trackedBubble().text;
       veh[tracked.id].marker.setTooltipContent(txt);
       updateTrackBar();
       if (txt === 'departed') setTimeout(() => untrack(true), 1500);
@@ -530,9 +569,14 @@
           encodeURIComponent(tracked.stopId) + '/eta')).json();
         const a = (data.arrivals || []).find(x => x.trip_id === tracked.tripId);
         if (a) tracked.arrivalEpoch = a.arrival;          // fresh prediction
-        else if (veh[tracked.id]) {                       // bus passed this stop
-          veh[tracked.id].marker.setTooltipContent('departed');
-          setTimeout(() => untrack(true), 1500);
+        else {                                            // server dropped it (filters < now-30s)
+          const v = veh[tracked.id];
+          const dist = (v && tracked.stopLatLng) ? v.marker.getLatLng().distanceTo(tracked.stopLatLng) : Infinity;
+          if (dist > ARRIVE_M) {                          // really gone → end + snap back
+            if (v) v.marker.setTooltipContent('departed');
+            setTimeout(() => untrack(true), 1500);
+          }
+          // else: late-but-close bus — keep last epoch; the 1s updater shows "due"
         }
       } catch (e) { /* keep last known ETA on a transient error */ }
     }
@@ -540,8 +584,10 @@
     function updateTrackBar() {
       const bar = document.getElementById('trackbar');
       if (!tracked) { bar.style.display = 'none'; return; }
+      const b = trackedBubble();
+      const distTxt = b.dist != null ? ' · ' + Math.round(b.dist) + ' m' : '';
       document.getElementById('trackinfo').textContent =
-        'Route ' + tracked.route + ' · ' + bubbleText(tracked.arrivalEpoch);
+        'Route ' + tracked.route + ' · ' + b.text + distTxt;
       document.getElementById('followbtn').style.display =
         tracked.following ? 'none' : 'inline-block';
       bar.style.display = 'block';
