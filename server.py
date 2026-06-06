@@ -26,11 +26,16 @@ from build_map import (get_gtfs_zip, load_lookups, build_shapes,
 
 POLL_SECONDS = 15  # a bit faster than Calgary's ~30s publish cadence
 
+# Trip Updates GTFS-RT (dataset gs4m-mdc2) — predicted arrival times per stop.
+# Separate feed from vehicle positions; same Socrata blob-download pattern.
+TRIP_UPDATES_URL = "https://data.calgary.ca/download/gs4m-mdc2/application%2Foctet-stream"
+
 # --- in-memory caches -------------------------------------------------------
 # The whole point of the backend: do expensive work once / on a timer, then
 # hand cheap cached data to every client. Clients NEVER hit Calgary directly.
 NETWORK = {"shapes": [], "stops": []}            # static, set once at startup
 SNAPSHOT = {"vehicles": [], "ts": 0, "matched": 0}  # latest live snapshot
+TRIP_UPDATES = {"index": {}, "ts": 0}            # stop_id -> [(arrival, trip_id, vehicle_id)]
 LOOKUPS = {}                                      # routes + trips for the join
 
 
@@ -46,10 +51,42 @@ def load_network():
           f"{len(NETWORK['stops'])} stops, {len(trips)} trips")
 
 
+def build_trip_index(feed):
+    """Trip Updates feed -> {stop_id: [(arrival_epoch, trip_id, vehicle_id), ...]}.
+
+    Calgary strips fields, so every optional is guarded with HasField — never
+    trust protobuf defaults. Prefers arrival.time, falls back to departure.time.
+    """
+    index = {}
+    for e in feed.entity:
+        if not e.HasField("trip_update"):
+            continue
+        tu = e.trip_update
+        tid = tu.trip.trip_id if tu.trip.HasField("trip_id") else None
+        vid = tu.vehicle.id if tu.HasField("vehicle") and tu.vehicle.id else None
+        for stu in tu.stop_time_update:
+            sid = stu.stop_id if stu.HasField("stop_id") else None
+            if not sid:
+                continue
+            t = None
+            if stu.HasField("arrival") and stu.arrival.HasField("time"):
+                t = stu.arrival.time
+            elif stu.HasField("departure") and stu.departure.HasField("time"):
+                t = stu.departure.time
+            if t:
+                index.setdefault(sid, []).append((t, tid, vid))
+    return index
+
+
 def poll_loop():
-    """Background worker: fetch, dedupe, resolve, cache. Runs forever."""
-    global SNAPSHOT
+    """Background worker: fetch, dedupe, resolve, cache. Runs forever.
+
+    Polls two feeds each tick — vehicle positions and trip updates — each with
+    its own timestamp dedupe so we only rebuild when that feed actually changed.
+    """
+    global SNAPSHOT, TRIP_UPDATES
     last_ts = None
+    last_tu_ts = None
     while True:
         try:
             feed = fetch_feed(FEED_URL)
@@ -63,7 +100,19 @@ def poll_loop():
             else:
                 print("[poll] no new data (same timestamp) — skipping rebuild")
         except Exception as exc:
-            print(f"[poll] failed: {exc}")
+            print(f"[poll] vehicles failed: {exc}")
+
+        try:
+            tu_feed = fetch_feed(TRIP_UPDATES_URL)
+            tu_ts = tu_feed.header.timestamp
+            if tu_ts != last_tu_ts:
+                last_tu_ts = tu_ts
+                index = build_trip_index(tu_feed)
+                TRIP_UPDATES = {"index": index, "ts": tu_ts}
+                print(f"[poll] trip-updates: {len(index)} stops with arrivals, ts={tu_ts}")
+        except Exception as exc:
+            print(f"[poll] trip-updates failed: {exc}")
+
         time.sleep(POLL_SECONDS)
 
 
@@ -101,6 +150,37 @@ def vehicles():
     ts = SNAPSHOT["ts"]
     age = int(time.time() - ts) if ts else None
     return {**SNAPSHOT, "age": age}
+
+
+@app.get("/api/stop/{stop_id}/eta")
+def stop_eta(stop_id: str):
+    """Next arrivals at a stop, soonest first (top 3).
+
+    'Nearest vehicle serving this stop' = soonest predicted arrival, NOT the
+    geographically closest bus. Each arrival's trip_id is resolved to route info
+    via the same static join used for vehicles, and carries trip_id/vehicle_id
+    so the frontend can link it to a live marker for tracking.
+    """
+    now = time.time()
+    arrivals = TRIP_UPDATES["index"].get(stop_id, [])
+    out = []
+    for epoch, tid, vid in arrivals:
+        if epoch < now - 30:            # drop arrivals already in the past
+            continue
+        trip = LOOKUPS["trips"].get(tid, {}) if tid else {}
+        route = LOOKUPS["routes"].get(trip.get("route_id"), {})
+        out.append({
+            "route": route.get("short", "?"),
+            "headsign": trip.get("headsign", ""),
+            "color": route.get("color", "#888888"),
+            "type": route.get("type", "?"),
+            "trip_id": tid,
+            "vehicle_id": vid,
+            "arrival": epoch,
+            "eta_seconds": int(epoch - now),
+        })
+    out.sort(key=lambda a: a["arrival"])
+    return {"stop_id": stop_id, "arrivals": out[:3], "ts": TRIP_UPDATES["ts"]}
 
 
 @app.get("/")

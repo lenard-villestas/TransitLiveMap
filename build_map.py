@@ -105,9 +105,12 @@ def build_stops(zf):
     stops = []
     for st in read_csv(zf, "stops.txt"):
         try:
+            # [lat, lon, name, stop_id] — stop_id is the key the frontend uses to
+            # call /api/stop/<id>/eta. Appended last so s[0..2] stay unchanged.
             stops.append([round(float(st["stop_lat"]), 5),
                           round(float(st["stop_lon"]), 5),
-                          st.get("stop_name", "")])
+                          st.get("stop_name", ""),
+                          st["stop_id"]])
         except (KeyError, ValueError):
             continue
     return stops
@@ -129,9 +132,11 @@ def build_vehicles(feed, routes, trips):
             rtype, head = route.get("type", "?"), trip.get("headsign", "")
         else:
             short, color, rtype, head = "?", "#888888", "unmatched", ""
-        # [lat, lon, route_short, color, headsign, vehicle_id, type]
+        # [lat, lon, route_short, color, headsign, vehicle_id, type, trip_id]
+        # trip_id (appended last) links a vehicle to a Trip-Updates arrival so the
+        # frontend can highlight/track the bus serving a clicked stop.
         vehicles.append([round(p.latitude, 5), round(p.longitude, 5),
-                         short, color, head, v.vehicle.id, rtype])
+                         short, color, head, v.vehicle.id, rtype, tid or ""])
     return vehicles, matched
 
 
