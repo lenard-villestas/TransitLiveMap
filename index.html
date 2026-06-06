@@ -1,83 +1,278 @@
 <!DOCTYPE html>
 <html>
+
 <head>
   <meta charset="utf-8">
   <title>Calgary Transit — live</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
   <style>
-    html, body, #map { height: 100%; margin: 0; background: #f7f7f5; }
-    #cap { position: absolute; z-index: 1000; top: 8px; left: 50px;
-           background: #fff; padding: 4px 8px; border-radius: 6px;
-           font: 13px system-ui, sans-serif; box-shadow: 0 1px 4px rgba(0,0,0,.25); }
-    .veh-icon img { width: 28px; height: 28px; display: block;
-                    transition: transform .25s linear;   /* smooth turning */
-                    filter: drop-shadow(0 1px 2px rgba(0,0,0,.4)); }
+    html,
+    body,
+    #map {
+      height: 100%;
+      margin: 0;
+      background: #f7f7f5;
+    }
+
+    #cap {
+      position: absolute;
+      z-index: 1000;
+      top: 8px;
+      left: 50px;
+      background: #fff;
+      padding: 4px 8px;
+      border-radius: 6px;
+      font: 13px system-ui, sans-serif;
+      box-shadow: 0 1px 4px rgba(0, 0, 0, .25);
+    }
+
+    .veh-icon img {
+      width: 28px;
+      height: 28px;
+      display: block;
+      transition: transform .25s linear;
+      /* smooth turning */
+      filter: drop-shadow(0 1px 2px rgba(0, 0, 0, .4));
+    }
+
     /* tracked bus: pulse the wrapper (scale) so the img's inline rotation is
        left untouched; glow the img. */
-    @keyframes pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.4); } }
-    .veh-icon.tracked { animation: pulse 1s ease-in-out infinite; }
-    .veh-icon.tracked img { filter: drop-shadow(0 0 5px #f59e0b) drop-shadow(0 0 10px #f59e0b); }
+    @keyframes pulse {
+
+      0%,
+      100% {
+        transform: scale(1);
+      }
+
+      50% {
+        transform: scale(1.4);
+      }
+    }
+
+    .veh-icon.tracked {
+      animation: pulse 1s ease-in-out infinite;
+    }
+
+    .veh-icon.tracked img {
+      filter: drop-shadow(0 0 5px #f59e0b) drop-shadow(0 0 10px #f59e0b);
+    }
 
     /* live ETA bubble floating above the tracked bus */
-    .eta-bubble { background: #f59e0b; color: #1f2937; border: none;
-                  font: 700 12px system-ui, sans-serif; border-radius: 10px;
-                  padding: 2px 8px; box-shadow: 0 1px 4px rgba(0,0,0,.4); }
-    .eta-bubble.leaflet-tooltip-top::before { border-top-color: #f59e0b; }
+    .eta-bubble {
+      background: #f59e0b;
+      color: #1f2937;
+      border: none;
+      font: 700 12px system-ui, sans-serif;
+      border-radius: 10px;
+      padding: 2px 8px;
+      box-shadow: 0 1px 4px rgba(0, 0, 0, .4);
+    }
+
+    .eta-bubble.leaflet-tooltip-top::before {
+      border-top-color: #f59e0b;
+    }
 
     /* stop-arrival popup */
-    .eta-list  { font: 13px system-ui, sans-serif; min-width: 190px; }
-    .eta-title { font-weight: 700; margin-bottom: 5px; }
-    .eta-empty { color: #64748b; }
-    .eta-row   { display: flex; align-items: center; gap: 6px; padding: 3px 0;
-                 border-top: 1px solid #eee; }
-    .eta-row:first-of-type { border-top: none; }
-    .eta-soon  { background: #fff7ed; margin: 0 -5px; padding: 5px; border-radius: 5px; }
-    .eta-badge { display: inline-block; min-width: 20px; text-align: center;
-                 color: #fff; border-radius: 4px; padding: 1px 5px; font-weight: 700; }
-    .eta-head  { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 90px; }
-    .eta-min   { margin-left: auto; white-space: nowrap; color: #475569; font-weight: 600; }
-    .eta-track { border: 1px solid #cbd5e1; background: #fff; border-radius: 5px;
-                 cursor: pointer; font-size: 12px; padding: 1px 7px; }
-    .eta-track:hover:not(:disabled) { background: #f1f5f9; }
-    .eta-track:disabled { opacity: .45; cursor: not-allowed; }
+    .eta-list {
+      font: 13px system-ui, sans-serif;
+      min-width: 190px;
+    }
+
+    .eta-title {
+      font-weight: 700;
+      margin-bottom: 5px;
+    }
+
+    .eta-empty {
+      color: #64748b;
+    }
+
+    .eta-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 0;
+      border-top: 1px solid #eee;
+    }
+
+    .eta-row:first-of-type {
+      border-top: none;
+    }
+
+    .eta-soon {
+      background: #fff7ed;
+      margin: 0 -5px;
+      padding: 5px;
+      border-radius: 5px;
+    }
+
+    .eta-badge {
+      display: inline-block;
+      min-width: 20px;
+      text-align: center;
+      color: #fff;
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-weight: 700;
+    }
+
+    .eta-head {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      max-width: 90px;
+    }
+
+    .eta-min {
+      margin-left: auto;
+      white-space: nowrap;
+      color: #475569;
+      font-weight: 600;
+    }
+
+    .eta-track {
+      border: 1px solid #cbd5e1;
+      background: #fff;
+      border-radius: 5px;
+      cursor: pointer;
+      font-size: 12px;
+      padding: 1px 7px;
+    }
+
+    .eta-track:hover:not(:disabled) {
+      background: #f1f5f9;
+    }
+
+    .eta-track:disabled {
+      opacity: .45;
+      cursor: not-allowed;
+    }
 
     /* "stop tracking" bar */
-    #trackbar { position: absolute; z-index: 1000; bottom: 14px; left: 50%;
-                transform: translateX(-50%); background: #1f2937; color: #fff;
-                padding: 6px 12px; border-radius: 20px; display: none;
-                font: 13px system-ui, sans-serif; box-shadow: 0 2px 8px rgba(0,0,0,.4); }
-    #trackbar button { margin-left: 8px; border: none; background: #f59e0b;
-                       color: #1f2937; font-weight: 700; border-radius: 12px;
-                       padding: 2px 10px; cursor: pointer; }
+    #trackbar {
+      position: absolute;
+      z-index: 1000;
+      bottom: 14px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #1f2937;
+      color: #fff;
+      padding: 6px 12px;
+      border-radius: 20px;
+      display: none;
+      font: 13px system-ui, sans-serif;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, .4);
+    }
+
+    #trackbar button {
+      margin-left: 8px;
+      border: none;
+      background: #f59e0b;
+      color: #1f2937;
+      font-weight: 700;
+      border-radius: 12px;
+      padding: 2px 10px;
+      cursor: pointer;
+    }
+
+    /* themed stop clusters (red badge with count, sized by child count) */
+    .stop-cluster {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 50%;
+      color: #fff;
+      font: 700 13px system-ui, sans-serif;
+      background: rgba(220, 38, 38, .85);
+      border: 2px solid #fff;
+      box-shadow: 0 1px 4px rgba(0, 0, 0, .4);
+    }
+    .stop-cluster.sm { width: 32px; height: 32px; }
+    .stop-cluster.md { width: 40px; height: 40px; font-size: 14px; }
+    .stop-cluster.lg { width: 50px; height: 50px; font-size: 15px; }
+
+    /* individual stop pin; .selected glows blue while its bus is tracked */
+    .stop-icon img { width: 30px; height: 38px; display: block; }
+    .stop-icon.selected img { animation: stopglow 1s ease-in-out infinite; }
+    @keyframes stopglow {
+      0%, 100% { filter: drop-shadow(0 0 3px #2563eb); }
+      50%      { filter: drop-shadow(0 0 8px #2563eb) drop-shadow(0 0 13px #2563eb); }
+    }
+
+    /* "you are here" dot */
+    .here-dot {
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: #2563eb;
+      border: 3px solid #fff;
+      box-shadow: 0 0 0 2px #2563eb, 0 1px 4px rgba(0, 0, 0, .5);
+    }
+
+    /* locate-me control button */
+    .locate-btn {
+      width: 34px;
+      height: 34px;
+      background: #fff center/20px no-repeat;
+      cursor: pointer;
+      font-size: 18px;
+      line-height: 34px;
+      text-align: center;
+    }
+    .locate-btn:hover { background-color: #f1f5f9; }
   </style>
 </head>
+
 <body>
   <div id="map"></div>
   <div id="cap">loading…</div>
-  <div id="trackbar">tracking <span id="trackinfo"></span><button onclick="untrack()">stop</button></div>
+  <div id="trackbar">Tracking <span id="trackinfo"></span><button id="followbtn" onclick="resumeFollow()" style="display:none">follow</button><button onclick="stopTracking()">stop</button></div>
   <script>
     const API = location.origin;
     const REFRESH_MS = 15000;
-    const STOP_ZOOM = 14;   // below this, don't render bus-stop pins (perf cliff)
+    const FOLLOW_MS = 200;   // throttle follow-cam pans (~5 Hz) so markercluster doesn't thrash
 
-    // bus-stop.png is a downward map-pin → anchor at the bottom tip.
-    const stopIcon = L.icon({ iconUrl: '/static/bus-stop.png', iconSize: [30, 38],
-                              iconAnchor: [15, 38], popupAnchor: [0, -34] });
+    // bus-stop.png is a downward map-pin → anchor at the bottom tip. divIcon (not
+    // L.icon) so we can toggle a .selected class to glow the tracked bus's stop.
+    function stopDiv(selected) {
+      return L.divIcon({
+        html: '<div class="stop-icon' + (selected ? ' selected' : '') + '"><img src="/static/bus-stop.png"></div>',
+        className: '', iconSize: [30, 38], iconAnchor: [15, 38], popupAnchor: [0, -34]
+      });
+    }
 
-    let ALL_STOPS = [];                 // [[lat,lon,name,stop_id], ...] from /api/network
-    const stopPins = new Map();         // stop_id -> L.marker currently shown
+    const stopMarkers = new Map();      // stop_id -> L.marker (all stops, in the cluster)
     const vehByTrip = {};               // trip_id -> vehicle id (rebuilt each refresh)
-    let tracked = null;                 // { id, tripId, stopId, arrivalEpoch, route }
+    let tracked = null;                 // { id, tripId, stopId, arrivalEpoch, route, stopLatLng, following }
     let etaCtx = { stopId: null, arrivals: [] };  // arrivals in the open popup
     let etaTimer = null;                // 1s bubble countdown updater
     let lastPan = null;                 // last latlng we follow-panned to
+    let lastFollowT = 0;                // last follow-cam pan time (throttle)
+    let hereMarker = null;              // "you are here" dot
+
+    // stops clustered into themed red counted badges (replaces the old zoom-gate)
+    const stopCluster = L.markerClusterGroup({
+      chunkedLoading: true,
+      maxClusterRadius: 60,
+      iconCreateFunction: cluster => {
+        const n = cluster.getChildCount();
+        const size = n < 10 ? 'sm' : n < 100 ? 'md' : 'lg';
+        const px = size === 'lg' ? 50 : size === 'md' ? 40 : 32;
+        return L.divIcon({
+          html: '<div class="stop-cluster ' + size + '"><span>' + n + '</span></div>',
+          className: '', iconSize: [px, px]   // square → anchor centres on the point
+        });
+      }
+    });
 
     // Each icon image has a "forward" direction baked in. To point it along a
     // travel bearing B (0=N, clockwise), we rotate by (B - forward).
     const ICONS = {
-      bus:   { url: '/static/bus.png',   forward: 90  },  // head points east
+      bus: { url: '/static/bus.png', forward: 90 },  // head points east
       train: { url: '/static/train.png', forward: 135 },  // head points south-east
     };
     function kindFor(type) {
@@ -97,53 +292,27 @@
     }).addTo(map);
 
     const shapeLayer = L.layerGroup().addTo(map);
-    const stopLayer = L.layerGroup();             // off by default (toggle in control)
-    const stopRenderer = L.canvas({ padding: 0.5 });
-    L.control.layers(null, { 'Route shapes': shapeLayer, 'Stops': stopLayer }).addTo(map);
+    map.addLayer(stopCluster);                    // stops shown (clustered) by default
+    L.control.layers(null, { 'Route shapes': shapeLayer, 'Stops': stopCluster }).addTo(map);
 
     async function loadNetwork() {
       const net = await (await fetch(API + '/api/network')).json();
       net.shapes.forEach(s =>
         L.polyline(s.coords, { color: s.color, weight: 1.5, opacity: 0.3 }).addTo(shapeLayer));
-      ALL_STOPS = net.stops;            // keep for zoom-gated interactive pins
-      net.stops.forEach(s =>
-        L.circleMarker([s[0], s[1]], { renderer: stopRenderer, radius: 2,
-          color: '#64748b', weight: 0, fillOpacity: 0.7 }).bindPopup(s[2]).addTo(stopLayer));
-      renderStopPins();
+      net.stops.forEach(s => {
+        const [lat, lon, name, sid] = s;
+        const m = L.marker([lat, lon], { icon: stopDiv(false), title: name })
+          .on('click', () => openStopEta(sid, name, m));
+        stopMarkers.set(sid, m);
+        stopCluster.addLayer(m);
+      });
     }
 
-    // --- zoom-gated stop pins (bus-stop.png) --------------------------------
-    // Rendering all ~3000 stops as DOM image markers is a known perf cliff, so
-    // only show pins at zoom >= STOP_ZOOM and only for stops inside the viewport.
-    function renderStopPins() {
-      if (map.getZoom() < STOP_ZOOM) {
-        stopPins.forEach(m => map.removeLayer(m));
-        stopPins.clear();
-        return;
-      }
-      const b = map.getBounds();
-      const want = new Set();
-      for (const s of ALL_STOPS) {
-        const lat = s[0], lon = s[1], name = s[2], sid = s[3];
-        if (!b.contains([lat, lon])) continue;
-        want.add(sid);
-        if (!stopPins.has(sid)) {
-          const m = L.marker([lat, lon], { icon: stopIcon, title: name })
-            .on('click', () => openStopEta(sid, name, m)).addTo(map);
-          stopPins.set(sid, m);
-        }
-      }
-      for (const sid of [...stopPins.keys()]) {
-        if (!want.has(sid)) { map.removeLayer(stopPins.get(sid)); stopPins.delete(sid); }
-      }
+    // highlight (or clear) the stop pin whose bus is being tracked
+    function highlightStop(stopId, on) {
+      const m = stopMarkers.get(stopId);
+      if (m) m.setIcon(stopDiv(on));
     }
-    // Debounce so follow-cam panning (many moveend/frame) doesn't re-scan 3000 stops each tick.
-    let stopPinTimer = null;
-    function scheduleStopPins() {
-      if (stopPinTimer) return;
-      stopPinTimer = setTimeout(() => { stopPinTimer = null; renderStopPins(); }, 150);
-    }
-    map.on('moveend zoomend', scheduleStopPins);
 
     // --- stop ETA popup -----------------------------------------------------
     const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g,
@@ -212,12 +381,14 @@
         v.marker.setLatLng([lerp(v.fromLat, v.toLat, t), lerp(v.fromLon, v.toLon, t)]);
         if (t >= 1) v.settled = true;
       }
-      // follow-cam: keep the tracked bus centred as it glides
-      if (tracked && veh[tracked.id]) {
+      // follow-cam: keep the tracked bus centred while following (throttled so
+      // per-frame panTo doesn't thrash markercluster's moveend re-clustering)
+      if (tracked && tracked.following && veh[tracked.id] && now - lastFollowT > FOLLOW_MS) {
         const ll = veh[tracked.id].marker.getLatLng();
         if (!lastPan || lastPan.lat !== ll.lat || lastPan.lng !== ll.lng) {
           map.panTo(ll, { animate: false, noMoveStart: true });
           lastPan = ll;
+          lastFollowT = now;
         }
       }
       requestAnimationFrame(animate);
@@ -241,11 +412,13 @@
           if (!v) {
             const marker = L.marker([lat, lon], { icon: makeIcon(kind) })
               .bindPopup('<b>Route ' + short + '</b> (' + type + ')<br>' +
-                         (head ? 'to ' + head + '<br>' : '') + 'vehicle ' + id)
+                (head ? 'to ' + head + '<br>' : '') + 'vehicle ' + id)
               .addTo(map);
-            veh[id] = { marker, forward: ICONS[kind].forward, bearing: ICONS[kind].forward,
-                        fromLat: lat, fromLon: lon, toLat: lat, toLon: lon,
-                        startT: now, dur: REFRESH_MS, settled: true };
+            veh[id] = {
+              marker, forward: ICONS[kind].forward, bearing: ICONS[kind].forward,
+              fromLat: lat, fromLon: lon, toLat: lat, toLon: lon,
+              startT: now, dur: REFRESH_MS, settled: true
+            };
           } else if (lat !== v.toLat || lon !== v.toLon) {
             const cur = v.marker.getLatLng();
             v.bearing = bearingDeg(cur.lat, cur.lng, lat, lon);  // face travel direction
@@ -261,7 +434,7 @@
 
         for (const id in veh) {
           if (!seen.has(id)) {
-            if (tracked && tracked.id === id) untrack();   // tracked bus left the feed
+            if (tracked && tracked.id === id) untrack(true);   // tracked bus left the feed
             map.removeLayer(veh[id].marker); delete veh[id];
           }
         }
@@ -289,12 +462,19 @@
       return el ? el.querySelector('.veh-icon') : null;
     }
 
+    const RETURN_ZOOM = 16;   // zoom to show the stop when snapping back on exit
+
     function track(a, stopId) {
       untrack();                              // clear any previous target
       const id = vehByTrip[a.trip_id];
       if (!id || !veh[id]) return;            // bus not reporting live → can't follow
-      tracked = { id, tripId: a.trip_id, stopId, arrivalEpoch: a.arrival, route: a.route };
+      const sm = stopMarkers.get(stopId);
+      tracked = {
+        id, tripId: a.trip_id, stopId, arrivalEpoch: a.arrival, route: a.route,
+        stopLatLng: sm ? sm.getLatLng() : null, following: true
+      };
       lastPan = null;
+      highlightStop(stopId, true);            // glow the stop being served
       const w = wrapperOf(id);
       if (w) w.classList.add('tracked');
       veh[id].marker.bindTooltip(bubbleText(a.arrival),
@@ -304,20 +484,36 @@
       updateTrackBar();
     }
 
-    function untrack() {
+    // Full teardown. snapBack=true flies the camera back to the selected stop.
+    function untrack(snapBack) {
       if (etaTimer) { clearInterval(etaTimer); etaTimer = null; }
-      if (tracked && veh[tracked.id]) {
-        veh[tracked.id].marker.unbindTooltip();
-        const w = wrapperOf(tracked.id);
-        if (w) w.classList.remove('tracked');
+      if (tracked) {
+        highlightStop(tracked.stopId, false);
+        if (veh[tracked.id]) {
+          veh[tracked.id].marker.unbindTooltip();
+          const w = wrapperOf(tracked.id);
+          if (w) w.classList.remove('tracked');
+        }
+        if (snapBack && tracked.stopLatLng)
+          map.setView(tracked.stopLatLng, Math.max(map.getZoom(), RETURN_ZOOM));
       }
       tracked = null;
       updateTrackBar();
     }
-    window.untrack = untrack;
+
+    // User dragged away → stop centring but keep the bus tracked (Follow resumes).
+    function pauseFollow() {
+      if (tracked && tracked.following) { tracked.following = false; updateTrackBar(); }
+    }
+    function resumeFollow() {
+      if (tracked) { tracked.following = true; lastPan = null; updateTrackBar(); }
+    }
+    function stopTracking() { untrack(true); }   // the trackbar "stop" button
+    window.resumeFollow = resumeFollow;
+    window.stopTracking = stopTracking;
 
     function updateBubble() {
-      if (!tracked || !veh[tracked.id]) { untrack(); return; }
+      if (!tracked || !veh[tracked.id]) { untrack(true); return; }
       // re-assert the flash class — the marker's DOM is recreated on zoom and
       // doesn't exist until follow-cam pans an off-screen bus into view.
       const w = wrapperOf(tracked.id);
@@ -325,7 +521,7 @@
       const txt = bubbleText(tracked.arrivalEpoch);
       veh[tracked.id].marker.setTooltipContent(txt);
       updateTrackBar();
-      if (txt === 'departed') setTimeout(untrack, 1500);
+      if (txt === 'departed') setTimeout(() => untrack(true), 1500);
     }
 
     async function refreshTrackedEta() {
@@ -336,7 +532,7 @@
         if (a) tracked.arrivalEpoch = a.arrival;          // fresh prediction
         else if (veh[tracked.id]) {                       // bus passed this stop
           veh[tracked.id].marker.setTooltipContent('departed');
-          setTimeout(untrack, 1500);
+          setTimeout(() => untrack(true), 1500);
         }
       } catch (e) { /* keep last known ETA on a transient error */ }
     }
@@ -346,14 +542,42 @@
       if (!tracked) { bar.style.display = 'none'; return; }
       document.getElementById('trackinfo').textContent =
         'Route ' + tracked.route + ' · ' + bubbleText(tracked.arrivalEpoch);
+      document.getElementById('followbtn').style.display =
+        tracked.following ? 'none' : 'inline-block';
       bar.style.display = 'block';
     }
 
-    map.on('dragstart', untrack);   // user takes the wheel → stop following
+    map.on('dragstart', pauseFollow);   // user explores → pause centring, keep tracking
+
+    // --- geolocation: locate button + start on the user's position ----------
+    const LocateControl = L.Control.extend({
+      options: { position: 'topright' },
+      onAdd: function () {
+        const c = L.DomUtil.create('div', 'leaflet-bar');
+        const b = L.DomUtil.create('a', 'locate-btn', c);
+        b.href = '#'; b.title = 'My location'; b.innerHTML = '📍';
+        L.DomEvent.on(b, 'click', L.DomEvent.stop)
+          .on(b, 'click', () => map.locate({ setView: true, maxZoom: RETURN_ZOOM }));
+        return c;
+      }
+    });
+    map.addControl(new LocateControl());
+
+    map.on('locationfound', e => {
+      if (hereMarker) { hereMarker.setLatLng(e.latlng); return; }
+      hereMarker = L.marker(e.latlng, {
+        icon: L.divIcon({ html: '<div class="here-dot"></div>', className: '', iconSize: [16, 16], iconAnchor: [8, 8] }),
+        interactive: false, keyboard: false, zIndexOffset: 1000
+      }).addTo(map);
+    });
+    map.on('locationerror', () => { /* denied / unavailable → keep Calgary default */ });
+
+    map.locate({ setView: true, maxZoom: 13 });   // try to start where the user is
 
     loadNetwork();
     refresh();
     setInterval(refresh, REFRESH_MS);
   </script>
 </body>
+
 </html>

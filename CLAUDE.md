@@ -9,9 +9,10 @@ anything so you don't undo a considered choice.
 
 ## Current state
 
-Phases 0–4 are complete and working. The app runs locally and shows the
-live fleet with rotating bus/train icons gliding across the CARTO light
-basemap.
+Phases 0–5 (incl. 5.1) are complete and working. The app shows the live fleet
+with rotating bus/train icons gliding across the CARTO light basemap; clickable
+clustered stops with live ETA popups; per-bus tracking (follow-cam + flash +
+countdown bubble); and a geolocation "locate me" control.
 
 **Run the app:**
 ```bash
@@ -37,7 +38,8 @@ TransitLiveMap/
 ├── .gitignore
 └── static/
     ├── bus.png        32×32 RGBA, icon head points EAST   (forward offset = 90°)
-    └── train.png      32×32 RGBA, icon head points SE     (forward offset = 135°)
+    ├── train.png      32×32 RGBA, icon head points SE     (forward offset = 135°)
+    └── bus-stop.png   red downward map-pin (anchor at bottom tip), stop markers
 ```
 
 The exploration scripts (`explore_feed`, `build_map`, `verify_join`) are
@@ -55,16 +57,20 @@ Calgary Open Data          (GTFS-RT protobuf, ~30s publish cadence)
   Python backend
   ├── load_network()      static GTFS loaded ONCE at startup into memory
   ├── poll_loop()         background daemon thread (not async — requests.get is blocking)
+  │                       polls BOTH feeds: vehicle positions + trip updates (each dedupes)
   ├── SNAPSHOT global     latest resolved vehicle list, replaced atomically
+  ├── TRIP_UPDATES global stop_id → [(arrival_epoch, trip_id, vehicle_id)] index
   ├── GET /api/network    shapes + stops (static, fetched once by frontend)
   ├── GET /api/vehicles   cached snapshot, instant (no network call)
-  ├── GET /static/*       bus.png, train.png
+  ├── GET /api/stop/{id}/eta   next 3 arrivals at a stop (soonest first), trip→route joined
+  ├── GET /static/*       bus.png, train.png, bus-stop.png
   └── GET /               index.html
         │
         ▼  fetch every 15s
   Leaflet frontend
-  ├── loadNetwork()       draws route polylines once, adds stops to toggle layer
-  ├── requestAnimationFrame loop   60fps lerp animation, independent of data fetch
+  ├── loadNetwork()       draws route polylines once; all stops → marker-cluster group
+  ├── requestAnimationFrame loop   60fps lerp animation + follow-cam for tracked bus
+  ├── stop click          → /api/stop/{id}/eta popup; "track" follows a live bus
   └── refresh() / setInterval     updates glide targets, computes bearing, sets icon rotation
 ```
 
@@ -91,18 +97,29 @@ behaves like the GTFS-RT spec says it *can*.
 | `position.bearing` | ❌ 0% | Compute from consecutive positions |
 | `position.speed` | ❌ 0% | Not provided — no dead-reckoning possible |
 | `current_status` | ❌ 0% | Not provided |
-| `stop_id` | ❌ 0% | Not provided |
+| `stop_id` (vehicle positions) | ❌ 0% | Not provided in the *positions* feed |
 
 **Join coverage:** ~97.4% of live `trip_id`s resolve in static GTFS.
 The ~2.6% misses are added/unscheduled trips — normal, not a bug.
+
+**Trip Updates feed findings (empirical, Phase 5):**
+- `stop_time_update.stop_id` is populated and matches static `stops.txt` **100%**
+  (4923/4923 in a sample) — clean join, unlike the positions feed.
+- `stop_time_update.arrival.time` is populated (absolute epoch); use it,
+  fall back to `departure.time`.
+- `trip_update.vehicle.id` is **empty** — so you CANNOT link an arrival to a live
+  vehicle by vehicle id. Link by **`trip_id`** instead (this is why `trip_id` was
+  appended to the vehicle array). Only ~57% of soonest arrivals have a live vehicle
+  broadcasting a position; the rest are predicted-but-not-yet-reporting (Track
+  button disables for those).
 
 **Feed URLs (Socrata download pattern):**
 ```
 Live vehicle positions: https://data.calgary.ca/download/am7c-qe3u/application%2Foctet-stream
 Static GTFS schedule:   https://data.calgary.ca/download/npk7-z3bj/application%2Fzip
                         (fallback: .../application%2Foctet-stream)
-Trip updates (ETA):     https://data.calgary.ca/download/<id>/...   ← needed for Phase 5
-Service alerts:         https://data.calgary.ca/download/<id>/...
+Trip updates (ETA):     https://data.calgary.ca/download/gs4m-mdc2/application%2Foctet-stream
+Service alerts:         https://data.calgary.ca/download/jhgn-ynqj/application%2Foctet-stream
 ```
 > The transitdata.calgary.ca/ctransit/*.pb URLs timeout — use the data.calgary.ca
 > Socrata endpoints above.
@@ -162,12 +179,19 @@ the `ICONS` table in index.html — nothing else changes.
 
 ## Stops layer
 
-~3000 stops are in the static GTFS. They're loaded into `/api/network` (as
-`stops` array) and drawn as small canvas-renderer circleMarkers in a toggleable
-layer (off by default). Do NOT give stops individual PNG icons — 3000 DOM
-image markers is a known perf cliff. If stop icons are wanted, zoom-gate them
-(e.g., only render at zoom ≥ 14) so they only appear when the map is close
-enough that count is manageable.
+~6000 stops are in the static GTFS, loaded into `/api/network` as the `stops`
+array `[lat, lon, name, stop_id]`.
+
+**Rendering (Phase 5.1):** stops are added to a **Leaflet.markercluster** group
+(`leaflet.markercluster@1.5.3`, loaded from unpkg). When zoomed out they collapse
+into themed red counted badges; zooming in splits them into individual
+`bus-stop.png` pins. Each pin's click opens the ETA popup.
+
+> ⚠️ The original perf rule still holds — **never render all ~6000 stops as raw
+> DOM image markers at once** (known perf cliff). Clustering is how we satisfy it:
+> the plugin keeps the live DOM marker count near viewport size. This **replaced**
+> the earlier zoom-gate (`STOP_ZOOM`, render-only-in-viewport) approach; don't
+> reintroduce raw per-stop markers. The plugin must stay, or restore zoom-gating.
 
 ---
 
@@ -180,22 +204,19 @@ enough that count is manageable.
 | 2 | Verify trip_id → route join on live data | `verify_join.py` |
 | 3 | FastAPI backend + live Leaflet map (teleporting) | `server.py`, `index.html` |
 | 4 | Rotating PNG icons + lerp animation + freeze mitigation | `index.html` |
+| 5 | Trip Updates poll + stop-click ETA popup (next 3 arrivals) + per-bus tracking (follow-cam, flash, countdown bubble) | `server.py`, `build_map.py`, `index.html` |
+| 5.1 | Stop marker-clustering (replaced zoom-gate) + selected-stop highlight + pause/resume-follow + snap-back-to-stop + geolocation locate control | `index.html` |
+
+Phase 5 implementation notes:
+- **"Nearest vehicle" = soonest predicted arrival**, NOT geographically closest
+  (wrong route/direction/already-past). Endpoint sorts by arrival epoch.
+- `build_vehicles` now appends `trip_id`; `build_stops` now appends `stop_id`.
+- ETA endpoint: `/api/stop/{stop_id}/eta` → `{arrivals:[{route,headsign,color,
+  type,trip_id,vehicle_id,arrival,eta_seconds}], ...}` (top 3, past filtered).
 
 ---
 
 ## Next phases (planned)
-
-### Phase 5 — Stop interaction + ETA
-Click a stop → highlight the nearest vehicle serving that stop + show ETA.
-- Use the **Trip Updates** GTFS-RT feed (separate from vehicle positions).
-  Trip Updates contains `stop_time_update` entries with predicted arrival times
-  per stop. This is separate from the vehicle positions feed — add a second
-  poll in `server.py` for trip updates.
-- "Nearest vehicle" means: among vehicles on trips that serve this stop,
-  which has the soonest predicted arrival — NOT the geographically nearest bus.
-  Straight-line distance is wrong (wrong route, wrong direction, already past).
-- Backend: new `/api/stop/<stop_id>/eta` endpoint.
-- Frontend: click handler on stop markers.
 
 ### Phase 6 — Snap-to-route interpolation (Tier 2 animation)
 Instead of straight-line lerp, animate vehicles *along their route polyline*.
@@ -239,15 +260,22 @@ line, once the app is stable.
   Import this into server.py for the startup join; do not duplicate.
 - `build_vehicles(feed, routes, trips)` — in `build_map.py`. Returns
   `(vehicles_list, matched_count)` where each vehicle is:
-  `[lat, lon, route_short, color, headsign, vehicle_id, route_type_str]`
+  `[lat, lon, route_short, color, headsign, vehicle_id, route_type_str, trip_id]`
+- `build_stops(zf)` — in `build_map.py`. Returns `[lat, lon, name, stop_id]` rows.
+- `build_trip_index(feed)` — in `server.py`. Trip Updates feed →
+  `{stop_id: [(arrival_epoch, trip_id, vehicle_id)]}`; guards every optional with
+  `HasField`, prefers `arrival.time` over `departure.time`.
 
 ---
 
 ## Known issues / do-not-touch
 
-- **Do not change the vehicle array format** `[lat,lon,short,color,head,id,type]`
-  without updating both `server.py` (build_vehicles) and `index.html` (the
-  destructuring `const [lat,lon,short,color,head,id,type] = arr`). They must stay in sync.
+- **Do not change the vehicle array format** `[lat,lon,short,color,head,id,type,trip_id]`
+  without updating both `build_map.py` (build_vehicles) and `index.html` (the
+  destructuring `const [lat,lon,short,color,head,id,type,tripId] = arr`). They must
+  stay in sync. Likewise the stops array `[lat,lon,name,stop_id]`.
+- **Stops use the marker-cluster plugin, not raw markers.** See the Stops layer
+  section — don't swap clustering for per-stop DOM markers (perf cliff).
 - **Do not add CORS restrictions yet** — the `allow_origins=["*"]` in
   `server.py` is intentional for local dev. Tighten this before cloud deploy.
 - **Static GTFS is downloaded fresh on each server startup.** For production,
