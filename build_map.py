@@ -95,7 +95,9 @@ def build_shapes(zf, routes, shape_route, max_shapes=None):
         plist.sort()
         coords = [[lat, lon] for _, lat, lon in plist]
         color = routes.get(shape_route.get(sid), {}).get("color", "#888888")
-        shapes.append({"coords": coords, "color": color})
+        # shape_id lets the frontend look up a vehicle's road geometry for
+        # snap-to-shape animation + the blue tracked-route highlight.
+        shapes.append({"shape_id": sid, "coords": coords, "color": color})
     if max_shapes:
         shapes = shapes[:max_shapes]
     return shapes
@@ -130,13 +132,14 @@ def build_vehicles(feed, routes, trips):
             route = routes.get(trip["route_id"], {})
             short, color = route.get("short", "?"), route.get("color", "#888888")
             rtype, head = route.get("type", "?"), trip.get("headsign", "")
+            sid = trip.get("shape_id") or ""
         else:
-            short, color, rtype, head = "?", "#888888", "unmatched", ""
-        # [lat, lon, route_short, color, headsign, vehicle_id, type, trip_id]
-        # trip_id (appended last) links a vehicle to a Trip-Updates arrival so the
-        # frontend can highlight/track the bus serving a clicked stop.
+            short, color, rtype, head, sid = "?", "#888888", "unmatched", "", ""
+        # [lat, lon, route_short, color, headsign, vehicle_id, type, trip_id, shape_id]
+        # trip_id links a vehicle to a Trip-Updates arrival; shape_id links it to its
+        # road geometry (snap-to-shape animation + blue tracked-route highlight).
         vehicles.append([round(p.latitude, 5), round(p.longitude, 5),
-                         short, color, head, v.vehicle.id, rtype, tid or ""])
+                         short, color, head, v.vehicle.id, rtype, tid or "", sid])
     return vehicles, matched
 
 

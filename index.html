@@ -9,6 +9,7 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+  <script src="https://unpkg.com/@turf/turf@7/turf.min.js"></script>
   <style>
     html,
     body,
@@ -71,23 +72,56 @@
     }
 
     .veh-icon.tracked img {
-      filter: drop-shadow(0 0 5px #f59e0b) drop-shadow(0 0 10px #f59e0b);
+      filter: drop-shadow(0 0 5px #2563eb) drop-shadow(0 0 10px #2563eb);
     }
 
-    /* live ETA bubble floating above the tracked bus */
+    /* route-number label on a vehicle; shown only when zoomed in (body.veh-labels) */
+    .veh-route {
+      display: none;
+      position: absolute;
+      top: -13px;
+      left: 50%;
+      transform: translateX(-50%);
+      color: #dc2626;
+      font: 800 11px system-ui, sans-serif;
+      line-height: 1;
+      white-space: nowrap;
+      pointer-events: none;
+      /* white halo so red text stays legible on the light basemap */
+      text-shadow: 0 0 2px #fff, 0 0 2px #fff, 0 0 3px #fff;
+    }
+    .veh-icon { position: relative; }
+    body.veh-labels .veh-route { display: block; }
+
+    /* live ETA bubble floating above the tracked bus (stop name + labeled timer) */
     .eta-bubble {
-      background: #f59e0b;
+      background: #fff;
       color: #1f2937;
       border: none;
-      font: 700 12px system-ui, sans-serif;
+      font: 12px system-ui, sans-serif;
       border-radius: 10px;
-      padding: 2px 8px;
-      box-shadow: 0 1px 4px rgba(0, 0, 0, .4);
+      padding: 4px 9px;
+      box-shadow: 0 1px 5px rgba(0, 0, 0, .35);
+      text-align: center;
     }
 
     .eta-bubble.leaflet-tooltip-top::before {
-      border-top-color: #f59e0b;
+      border-top-color: #fff;
     }
+
+    .bub-stop {
+      font-size: 10px;
+      color: #64748b;
+      max-width: 180px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .bub-time { font-weight: 700; }
+    /* red "Late:" countdown (shared by bubble, track bar, stop popup) */
+    .late { color: #dc2626; font-weight: 700; }
+    #trackbar .late { color: #f87171; }   /* brighter red on the dark track bar */
 
     /* stop-arrival popup */
     .eta-list {
@@ -175,14 +209,26 @@
       background: #1f2937;
       color: #fff;
       padding: 6px 12px;
-      border-radius: 20px;
+      border-radius: 16px;
       display: none;
+      align-items: center;
+      gap: 6px;
       font: 13px system-ui, sans-serif;
       box-shadow: 0 2px 8px rgba(0, 0, 0, .4);
     }
 
+    .tb-stop {
+      font-size: 11px;
+      color: #cbd5e1;
+      max-width: 220px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .tb-time { font-weight: 700; }
+
     #trackbar button {
-      margin-left: 8px;
       border: none;
       background: #f59e0b;
       color: #1f2937;
@@ -204,16 +250,45 @@
       border: 2px solid #fff;
       box-shadow: 0 1px 4px rgba(0, 0, 0, .4);
     }
-    .stop-cluster.sm { width: 32px; height: 32px; }
-    .stop-cluster.md { width: 40px; height: 40px; font-size: 14px; }
-    .stop-cluster.lg { width: 50px; height: 50px; font-size: 15px; }
+
+    .stop-cluster.sm {
+      width: 32px;
+      height: 32px;
+    }
+
+    .stop-cluster.md {
+      width: 40px;
+      height: 40px;
+      font-size: 14px;
+    }
+
+    .stop-cluster.lg {
+      width: 50px;
+      height: 50px;
+      font-size: 15px;
+    }
 
     /* individual stop pin; .selected glows blue while its bus is tracked */
-    .stop-icon img { width: 30px; height: 38px; display: block; }
-    .stop-icon.selected img { animation: stopglow 1s ease-in-out infinite; }
+    .stop-icon img {
+      width: 30px;
+      height: 38px;
+      display: block;
+    }
+
+    .stop-icon.selected img {
+      animation: stopglow 1s ease-in-out infinite;
+    }
+
     @keyframes stopglow {
-      0%, 100% { filter: drop-shadow(0 0 3px #2563eb); }
-      50%      { filter: drop-shadow(0 0 8px #2563eb) drop-shadow(0 0 13px #2563eb); }
+
+      0%,
+      100% {
+        filter: drop-shadow(0 0 3px #2563eb);
+      }
+
+      50% {
+        filter: drop-shadow(0 0 8px #2563eb) drop-shadow(0 0 13px #2563eb);
+      }
     }
 
     /* "you are here" dot */
@@ -236,7 +311,10 @@
       line-height: 34px;
       text-align: center;
     }
-    .locate-btn:hover { background-color: #f1f5f9; }
+
+    .locate-btn:hover {
+      background-color: #f1f5f9;
+    }
   </style>
 </head>
 
@@ -244,13 +322,15 @@
   <div id="map"></div>
   <div id="cap">loading…</div>
   <div id="zoomcap"></div>
-  <div id="trackbar">Tracking <span id="trackinfo"></span><button id="followbtn" onclick="resumeFollow()" style="display:none">follow</button><button onclick="stopTracking()">stop</button></div>
+  <div id="trackbar"><span id="trackinfo"></span><button id="followbtn" onclick="resumeFollow()"
+      style="display:none">follow</button><button onclick="stopTracking()">stop</button></div>
   <script>
     const API = location.origin;
     const REFRESH_MS = 15000;
-    const FOLLOW_MS = 200;   // throttle follow-cam pans (~5 Hz) so markercluster doesn't thrash
     const DISABLE_CLUSTER_ZOOM = 16;   // at/above this zoom, stops show individually (no clusters)
-    const ARRIVE_M = 120;    // tracked bus within this many metres of the stop → "due"
+    const DUE_M = 50;         // tracked bus within this many metres (along route, before stop) → "due"
+    const DEPART_M = 20;      // ...and "departed"/exit once it's this far PAST the stop
+    const OFFROAD_M = 50;    // GPS fix farther than this from its shape → straight-lerp fallback
 
     // bus-stop.png is a downward map-pin → anchor at the bottom tip. divIcon (not
     // L.icon) so we can toggle a .selected class to glow the tracked bus's stop.
@@ -267,10 +347,14 @@
     let etaCtx = { stopId: null, arrivals: [] };  // arrivals in the open popup
     let etaTimer = null;                // 1s bubble countdown updater
     let lastPan = null;                 // last latlng we follow-panned to
-    let lastFollowT = 0;                // last follow-cam pan time (throttle)
     let hereMarker = null;              // "you are here" dot
     let selectedStopMarker = null;      // standalone glowing pin shown while tracking
     let clusterWasOn = false;           // was the stop cluster on the map before tracking?
+    const shapesById = new Map();       // shape_id -> turf LineString ([lng,lat]) for snapping
+    let routeLine = null;               // blue bus→stop polyline while tracking
+    let lastRouteT = 0;                 // last time the blue route was trimmed (throttle)
+    // vehicle-click "preview" (highlight bus + its next stop before committing to track)
+    let previewStopMarker = null, previewVehId = null, previewArrival = null, previewStopId = null;
 
     // stops clustered into themed red counted badges (replaces the old zoom-gate)
     const stopCluster = L.markerClusterGroup({
@@ -297,9 +381,12 @@
     function kindFor(type) {
       return /tram|lrt|rail|subway/i.test(type) ? 'train' : 'bus';
     }
-    function makeIcon(kind) {
+    function makeIcon(kind, short) {
+      // route label is a sibling of <img> (img alone gets the rotation transform),
+      // so it stays upright; hidden by CSS unless body.veh-labels (zoom ≥ 16)
       return L.divIcon({
-        html: '<div class="veh-icon"><img src="' + ICONS[kind].url + '"></div>',
+        html: '<div class="veh-icon"><img src="' + ICONS[kind].url + '">' +
+              '<span class="veh-route">' + esc(short) + '</span></div>',
         className: '', iconSize: [28, 28], iconAnchor: [14, 14], popupAnchor: [0, -14]
       });
     }
@@ -316,20 +403,29 @@
 
     // live zoom readout — watch this to pick a DISABLE_CLUSTER_ZOOM you like
     function updateZoomCap() {
+      const z = map.getZoom();
       document.getElementById('zoomcap').textContent =
-        'zoom ' + map.getZoom() + ' · cluster < ' + DISABLE_CLUSTER_ZOOM;
+        'zoom ' + z + ' · cluster < ' + DISABLE_CLUSTER_ZOOM;
+      document.body.classList.toggle('veh-labels', z >= 16);   // route numbers on buses
     }
     map.on('zoomend', updateZoomCap);
     updateZoomCap();
 
     async function loadNetwork() {
       const net = await (await fetch(API + '/api/network')).json();
-      net.shapes.forEach(s =>
-        L.polyline(s.coords, { color: s.color, weight: 1.5, opacity: 0.3 }).addTo(shapeLayer));
+      net.shapes.forEach(s => {
+        L.polyline(s.coords, { color: s.color, weight: 1.5, opacity: 0.3 }).addTo(shapeLayer);
+        // cache a turf line ([lng,lat]) per shape_id for snap-to-shape + route slicing
+        if (s.shape_id && s.coords.length > 1)
+          shapesById.set(s.shape_id, turf.lineString(s.coords.map(c => [c[1], c[0]])));
+      });
       net.stops.forEach(s => {
         const [lat, lon, name, sid] = s;
+        // Bind the popup ONCE and fill it on open — binding inside a click handler
+        // double-wires Leaflet's toggle and the popup stops reopening.
         const m = L.marker([lat, lon], { icon: stopDiv(false), title: name })
-          .on('click', () => openStopEta(sid, name, m));
+          .bindPopup('<div class="eta-list eta-empty">loading…</div>');
+        m.on('popupopen', () => fillStopEta(sid, name, m));
         stopMarkers.set(sid, m);
         stopCluster.addLayer(m);
       });
@@ -339,13 +435,21 @@
     const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g,
       c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-    function etaText(secs) {
-      if (secs <= 30) return 'due';
-      return Math.round(secs / 60) + ' min';
+    // "ETA: 5 minutes" / "Late: 2 minutes" (late = counting up past the predicted time)
+    function etaPhrase(secs) {
+      const m = Math.round(Math.abs(secs) / 60);
+      const unit = m === 1 ? 'minute' : 'minutes';
+      if (secs < 0) return { text: 'Late: ' + m + ' ' + unit, late: true };
+      return { text: 'ETA: ' + (m === 0 ? '<1 minute' : m + ' ' + unit), late: false };
+    }
+    // for stop-popup rows (time only): a small "due" window, else ETA:/Late:
+    function etaParts(secs) {
+      if (secs <= 30 && secs >= -30) return { text: 'due', late: false };
+      return etaPhrase(secs);
     }
 
-    async function openStopEta(sid, name, marker) {
-      marker.bindPopup('<div class="eta-list eta-empty">loading…</div>').openPopup();
+    async function fillStopEta(sid, name, marker) {
+      marker.setPopupContent('<div class="eta-list eta-empty">loading…</div>');
       try {
         const data = await (await fetch(API + '/api/stop/' + encodeURIComponent(sid) + '/eta')).json();
         marker.setPopupContent(renderEtaPopup(name, data));
@@ -363,10 +467,11 @@
         const live = vehByTrip[a.trip_id];   // is the serving bus reporting live?
         const btn = '<button class="eta-track" onclick="trackIdx(' + i + ')"' +
           (live ? '' : ' disabled title="vehicle not live yet"') + '>track</button>';
+        const e = etaParts(a.eta_seconds);
         return '<div class="eta-row' + (i === 0 ? ' eta-soon' : '') + '">' +
           '<span class="eta-badge" style="background:' + esc(a.color) + '">' + esc(a.route) + '</span>' +
           '<span class="eta-head" title="' + esc(a.headsign) + '">' + esc(a.headsign) + '</span>' +
-          '<span class="eta-min">' + etaText(a.eta_seconds) + '</span>' + btn + '</div>';
+          '<span class="eta-min' + (e.late ? ' late' : '') + '">' + e.text + '</span>' + btn + '</div>';
       }).join('');
       return '<div class="eta-list">' + head + rows + '</div>';
     }
@@ -375,11 +480,80 @@
       if (a) track(a, etaCtx.stopId);
     };
 
+    // --- click a vehicle → its next stop + Track ----------------------------
+    function clearPreview() {
+      if (previewStopMarker) { map.removeLayer(previewStopMarker); previewStopMarker = null; }
+      if (previewVehId && veh[previewVehId] && (!tracked || tracked.id !== previewVehId)) {
+        const w = wrapperOf(previewVehId);
+        if (w) w.classList.remove('tracked');
+      }
+      previewVehId = null; previewArrival = null; previewStopId = null;
+    }
+
+    function basicVehiclePopup(v) {
+      L.popup({ offset: [0, -14] }).setLatLng(v.marker.getLatLng()).setContent(
+        '<b>Route ' + esc(v.short) + '</b> (' + esc(v.type) + ')<br>' +
+        (v.head ? 'to ' + esc(v.head) + '<br>' : '') + 'next stop unknown').openOn(map);
+    }
+
+    async function openVehicleNext(id) {
+      clearPreview();
+      const v = veh[id];
+      if (!v) return;
+      if (!v.tripId) { basicVehiclePopup(v); return; }
+      let data;
+      try {
+        data = await (await fetch(API + '/api/trip/' + encodeURIComponent(v.tripId) + '/next-stop')).json();
+      } catch (e) { basicVehiclePopup(v); return; }
+      const sm = data && data.stop_id ? stopMarkers.get(data.stop_id) : null;
+      if (!sm) { basicVehiclePopup(v); return; }
+      const stopLatLng = sm.getLatLng();
+      const stopName = sm.options.title || 'Stop';
+      // preview-highlight: glow the bus + a standalone glowing pin at the next stop
+      previewVehId = id;
+      const w = wrapperOf(id); if (w) w.classList.add('tracked');
+      previewStopMarker = L.marker(stopLatLng, { icon: stopDiv(true), interactive: false, keyboard: false }).addTo(map);
+      previewArrival = { trip_id: v.tripId, arrival: data.arrival, route: data.route };
+      previewStopId = data.stop_id;
+      const e = etaParts(data.eta_seconds);
+      const html = '<div class="eta-list"><div class="eta-title">' + esc(stopName) + '</div>' +
+        '<div class="eta-row"><span class="eta-badge" style="background:#2563eb">' + esc(data.route) + '</span>' +
+        '<span class="eta-head" title="' + esc(data.headsign) + '">' + esc(data.headsign) + '</span>' +
+        '<span class="eta-min' + (e.late ? ' late' : '') + '">' + e.text + '</span>' +
+        '<button class="eta-track" onclick="trackVehiclePreview()">track</button></div></div>';
+      L.popup({ offset: [0, -30] }).setLatLng(stopLatLng).setContent(html).openOn(map)
+        .on('remove', clearPreview);   // closing without tracking drops the highlights
+    }
+    window.trackVehiclePreview = function () {
+      const a = previewArrival, sid = previewStopId;
+      clearPreview();
+      if (a && sid) track(a, sid);
+    };
+
     // --- bearing from two points (planar approx is fine for short hops) ------
     function bearingDeg(lat1, lon1, lat2, lon2) {
       const dy = lat2 - lat1;
       const dx = (lon2 - lon1) * Math.cos((lat1 + lat2) / 2 * Math.PI / 180);
       return (Math.atan2(dx, dy) * 180 / Math.PI + 360) % 360;   // 0=N, clockwise
+    }
+
+    // --- snap-to-shape geometry (turf uses [lng,lat]; our data is [lat,lon]) --
+    const KM = 1000;
+    // km along `line` of the point nearest [lat,lon] + how far off the line it is (m)
+    function projectOnLine(line, lat, lon) {
+      const snap = turf.nearestPointOnLine(line, turf.point([lon, lat]), { units: 'kilometers' });
+      return { dist: snap.properties.location, offM: snap.properties.dist * KM };
+    }
+    function pointAt(line, distKm) {
+      const c = turf.along(line, distKm, { units: 'kilometers' }).geometry.coordinates;
+      return { lat: c[1], lon: c[0] };
+    }
+    function shapeBearing(line, fromDist, toDist) {
+      const a = pointAt(line, fromDist);
+      const b = (Math.abs(toDist - fromDist) < 1e-4)
+        ? pointAt(line, fromDist + (toDist >= fromDist ? 0.01 : -0.01))
+        : pointAt(line, toDist);
+      return bearingDeg(a.lat, a.lon, b.lat, b.lon);
     }
 
     // --- animation engine ---------------------------------------------------
@@ -393,25 +567,71 @@
       if (img) img.style.transform = 'rotate(' + (v.bearing - v.forward) + 'deg)';
     }
 
+    // Aim a vehicle at its new GPS fix. If it sits on its route shape, interpolate
+    // ALONG the polyline (rides the road); otherwise straight-line lerp (fallback).
+    function setTarget(v, lat, lon, now) {
+      const cur = v.marker.getLatLng();
+      v.toLatRaw = lat; v.toLonRaw = lon;
+      const line = v.shapeId ? shapesById.get(v.shapeId) : null;
+      let snapped = false;
+      if (line) {
+        const to = projectOnLine(line, lat, lon);
+        if (to.offM <= OFFROAD_M) {                 // on/near its route → snap
+          const from = projectOnLine(line, cur.lat, cur.lng);
+          v.mode = 'shape'; v.line = line;
+          v.fromDist = from.dist; v.toDist = to.dist; v.curDist = from.dist;
+          v.bearing = shapeBearing(line, from.dist, to.dist);
+          snapped = true;
+        }
+      }
+      if (!snapped) {                               // off-route / no shape → straight
+        v.mode = 'line';
+        v.bearing = bearingDeg(cur.lat, cur.lng, lat, lon);
+        v.fromLat = cur.lat; v.fromLon = cur.lng; v.toLat = lat; v.toLon = lon;
+      }
+      setRotation(v);
+      v.dur = v.lastMove ? Math.min(Math.max(now - v.lastMove, 12000), 40000) : REFRESH_MS;
+      v.startT = now; v.lastMove = now; v.settled = false;
+    }
+
+    // hide every vehicle except the tracked one while tracking; restore otherwise
+    function applyVehicleVisibility() {
+      for (const id in veh) {
+        const show = !tracked || id === tracked.id;
+        const onMap = map.hasLayer(veh[id].marker);
+        if (show && !onMap) veh[id].marker.addTo(map);
+        else if (!show && onMap) map.removeLayer(veh[id].marker);
+      }
+    }
+
     function animate() {
       const now = performance.now();
       for (const id in veh) {
         const v = veh[id];
         if (v.settled) continue;
         const t = v.dur ? Math.min((now - v.startT) / v.dur, 1) : 1;
-        v.marker.setLatLng([lerp(v.fromLat, v.toLat, t), lerp(v.fromLon, v.toLon, t)]);
+        if (v.mode === 'shape' && v.line) {
+          const d = lerp(v.fromDist, v.toDist, t);
+          v.curDist = d;
+          const p = pointAt(v.line, d);
+          v.marker.setLatLng([p.lat, p.lon]);
+        } else {
+          v.marker.setLatLng([lerp(v.fromLat, v.toLat, t), lerp(v.fromLon, v.toLon, t)]);
+        }
         if (t >= 1) v.settled = true;
       }
-      // follow-cam: keep the tracked bus centred while following (throttled so
-      // per-frame panTo doesn't thrash markercluster's moveend re-clustering)
-      if (tracked && tracked.following && veh[tracked.id] && now - lastFollowT > FOLLOW_MS) {
+      // follow-cam: keep the tracked bus centred, every frame (the stop cluster is
+      // removed while tracking, so per-frame panning is cheap — no 5 Hz lurch)
+      if (tracked && tracked.following && veh[tracked.id]) {
         const ll = veh[tracked.id].marker.getLatLng();
         if (!lastPan || lastPan.lat !== ll.lat || lastPan.lng !== ll.lng) {
           map.panTo(ll, { animate: false, noMoveStart: true });
           lastPan = ll;
-          lastFollowT = now;
         }
       }
+      // trim the blue route to the bus's current position (throttled ~8 Hz) so the
+      // tail follows the glide instead of lagging the 15 s feed refresh
+      if (tracked && now - lastRouteT > 120) { drawTrackedRoute(); lastRouteT = now; }
       requestAnimationFrame(animate);
     }
     requestAnimationFrame(animate);
@@ -424,32 +644,26 @@
         for (const k in vehByTrip) delete vehByTrip[k];   // rebuilt below
 
         data.vehicles.forEach(arr => {
-          const [lat, lon, short, color, head, id, type, tripId] = arr;
+          const [lat, lon, short, color, head, id, type, tripId, shapeId] = arr;
           seen.add(id);
           if (tripId) vehByTrip[tripId] = id;
           const kind = kindFor(type);
           let v = veh[id];
 
           if (!v) {
-            const marker = L.marker([lat, lon], { icon: makeIcon(kind) })
-              .bindPopup('<b>Route ' + short + '</b> (' + type + ')<br>' +
-                (head ? 'to ' + head + '<br>' : '') + 'vehicle ' + id)
-              .addTo(map);
+            const marker = L.marker([lat, lon], { icon: makeIcon(kind, short) })
+              .on('click', () => openVehicleNext(id));   // → next stop + Track preview
+            if (!tracked || id === tracked.id) marker.addTo(map);   // visibility gate
             veh[id] = {
               marker, forward: ICONS[kind].forward, bearing: ICONS[kind].forward,
-              fromLat: lat, fromLon: lon, toLat: lat, toLon: lon,
+              shapeId: shapeId || null, tripId: tripId || null, short, type, head, mode: 'line',
+              fromLat: lat, fromLon: lon, toLat: lat, toLon: lon, toLatRaw: lat, toLonRaw: lon,
               startT: now, dur: REFRESH_MS, settled: true
             };
-          } else if (lat !== v.toLat || lon !== v.toLon) {
-            const cur = v.marker.getLatLng();
-            v.bearing = bearingDeg(cur.lat, cur.lng, lat, lon);  // face travel direction
-            setRotation(v);
-            v.fromLat = cur.lat; v.fromLon = cur.lng;
-            v.toLat = lat; v.toLon = lon;
-            // Glide over the real gap since this vehicle last moved, but never so
-            // briefly that it freezes long before the next update arrives.
-            v.dur = v.lastMove ? Math.min(Math.max(now - v.lastMove, 12000), 40000) : REFRESH_MS;
-            v.startT = now; v.lastMove = now; v.settled = false;
+          } else {
+            if (shapeId) v.shapeId = shapeId;
+            if (tripId) v.tripId = tripId;
+            if (lat !== v.toLatRaw || lon !== v.toLonRaw) setTarget(v, lat, lon, now);
           }
         });
 
@@ -460,7 +674,8 @@
           }
         }
 
-        if (tracked) refreshTrackedEta();   // keep the countdown honest
+        applyVehicleVisibility();           // keep only the tracked bus while tracking
+        if (tracked) { refreshTrackedEta(); drawTrackedRoute(); }   // ETA + blue route
 
         document.getElementById('cap').textContent =
           data.vehicles.length + ' vehicles · snapshot ' + data.age +
@@ -476,13 +691,32 @@
     function trackedBubble() {
       const v = tracked && veh[tracked.id];
       const secs = tracked ? tracked.arrivalEpoch - Date.now() / 1000 : 0;
-      const dist = (v && tracked.stopLatLng) ? v.marker.getLatLng().distanceTo(tracked.stopLatLng) : null;
-      let text;
-      if (dist != null && dist <= ARRIVE_M) { tracked.wasNear = true; text = 'due'; }
-      else if (tracked && tracked.wasNear && dist != null && dist > ARRIVE_M) text = 'departed';
-      else if (secs <= 0) text = '<1 min';   // prediction passed but bus still away
-      else text = Math.round(secs / 60) + ' min';
-      return { text, dist };
+      // Prefer along-route remaining distance (signed, + = stop ahead) — reaches ~0 at
+      // the stop. Fall back to straight-line for off-route buses / stops off the shape.
+      let rem = null, dist = null;
+      if (v) {
+        if (tracked.stopDist != null && v.mode === 'shape' && v.curDist != null) {
+          rem = (tracked.stopDist - v.curDist) * 1000;   // metres along the route
+          dist = Math.abs(rem);
+        } else if (tracked.stopLatLng) {
+          dist = v.marker.getLatLng().distanceTo(tracked.stopLatLng);
+        }
+      }
+      // due window: along-route, from DUE_M before the stop to DEPART_M past it
+      const due = rem != null ? (rem <= DUE_M && rem >= -DEPART_M) : (dist != null && dist <= DUE_M);
+      if (due) { tracked.wasNear = true; return { state: 'due', text: 'due', late: false, dist, rem }; }
+      const departed = tracked.wasNear &&
+        ((rem != null && rem < -DEPART_M) || (rem == null && dist != null && dist > DEPART_M));
+      if (departed) return { state: 'departed', text: 'departed', late: false, dist, rem };
+      const p = etaPhrase(secs);   // ETA: N minutes, or Late: N minutes (counting up)
+      return { state: p.late ? 'late' : 'eta', text: p.text, late: p.late, dist, rem };
+    }
+
+    // bubble HTML: target stop name on top, labeled timer below (red when late)
+    function bubbleHTML(b) {
+      const nm = esc(tracked.stopName || '');
+      return '<div class="bub-stop" title="' + nm + '">' + nm + '</div>' +
+        '<div class="bub-time' + (b.late ? ' late' : '') + '">' + b.text + '</div>';
     }
 
     function wrapperOf(id) {
@@ -497,10 +731,21 @@
       const id = vehByTrip[a.trip_id];
       if (!id || !veh[id]) return;            // bus not reporting live → can't follow
       const sm = stopMarkers.get(stopId);
+      const stopLatLng = sm ? sm.getLatLng() : null;
       tracked = {
+        // arrivalEpoch is the FIXED anchor for ETA/Late — captured now, never re-based
+        // by later feed predictions (see refreshTrackedEta).
         id, tripId: a.trip_id, stopId, arrivalEpoch: a.arrival, route: a.route,
-        stopLatLng: sm ? sm.getLatLng() : null, following: true
+        stopLatLng, stopName: sm ? (sm.options.title || '') : '', following: true
       };
+      // project the stop onto the bus's shape once → its along-route distance, so the
+      // ETA can measure remaining distance ALONG the road (reaches ~0 at the stop)
+      // instead of straight-line to the snapped centreline (which floors at the curb).
+      const line = veh[id].shapeId ? shapesById.get(veh[id].shapeId) : null;
+      if (line && stopLatLng) {
+        const sp = projectOnLine(line, stopLatLng.lat, stopLatLng.lng);
+        if (sp.offM <= OFFROAD_M) { tracked.stopDist = sp.dist; }   // stop is on this shape
+      }
       lastPan = null;
       // declutter: hide all other stops, show only this one as a standalone glowing
       // pin (so it's always visible and never collapses into a cluster while following)
@@ -513,20 +758,50 @@
       }
       const w = wrapperOf(id);
       if (w) w.classList.add('tracked');
-      veh[id].marker.bindTooltip(trackedBubble().text,
+      veh[id].marker.bindTooltip(bubbleHTML(trackedBubble()),
         { permanent: true, direction: 'top', offset: [0, -18], className: 'eta-bubble' }).openTooltip();
       map.closePopup();
+      applyVehicleVisibility();               // hide every other bus
+      drawTrackedRoute();                     // blue path from the bus to the stop
       etaTimer = setInterval(updateBubble, 1000);
       updateTrackBar();
+    }
+
+    // Draw the tracked bus's route as a blue line sliced from its current position
+    // to the selected stop (shrinks as it approaches). Falls back to nothing if the
+    // bus has no shape or the slice can't be computed.
+    function clearTrackedRoute() {
+      if (routeLine) { map.removeLayer(routeLine); routeLine = null; }
+    }
+    // Trim the blue route from the bus's CURRENT along-route position to the stop and
+    // update the polyline in place. Called from the render loop so the tail follows
+    // the gliding bus instead of lagging the 15 s data refresh.
+    function drawTrackedRoute() {
+      const v = tracked && veh[tracked.id];
+      if (!v || tracked.stopDist == null) { clearTrackedRoute(); return; }
+      const line = v.shapeId ? shapesById.get(v.shapeId) : null;
+      if (!line) { clearTrackedRoute(); return; }
+      const ll = v.marker.getLatLng();
+      const from = (v.mode === 'shape' && v.curDist != null)
+        ? v.curDist : projectOnLine(line, ll.lat, ll.lng).dist;
+      if (from >= tracked.stopDist) { clearTrackedRoute(); return; }   // reached/passed stop
+      try {
+        const slice = turf.lineSliceAlong(line, from, tracked.stopDist, { units: 'kilometers' });
+        const latlngs = slice.geometry.coordinates.map(c => [c[1], c[0]]);
+        if (latlngs.length < 2) { clearTrackedRoute(); return; }
+        if (routeLine) routeLine.setLatLngs(latlngs);
+        else routeLine = L.polyline(latlngs, { color: '#2563eb', weight: 5, opacity: 0.85 }).addTo(map);
+      } catch (e) { /* degenerate slice → leave last line */ }
     }
 
     // Full teardown. snapBack=true flies the camera back to the selected stop.
     function untrack(snapBack) {
       if (etaTimer) { clearInterval(etaTimer); etaTimer = null; }
-      // restore the decluttered stops
+      // restore the decluttered stops + remove the blue route
       if (selectedStopMarker) { map.removeLayer(selectedStopMarker); selectedStopMarker = null; }
       if (clusterWasOn && !map.hasLayer(stopCluster)) map.addLayer(stopCluster);
       clusterWasOn = false;
+      clearTrackedRoute();
       if (tracked) {
         if (veh[tracked.id]) {
           veh[tracked.id].marker.unbindTooltip();
@@ -537,6 +812,7 @@
           map.setView(tracked.stopLatLng, Math.max(map.getZoom(), RETURN_ZOOM));
       }
       tracked = null;
+      applyVehicleVisibility();           // bring all the other buses back
       updateTrackBar();
     }
 
@@ -557,40 +833,45 @@
       // doesn't exist until follow-cam pans an off-screen bus into view.
       const w = wrapperOf(tracked.id);
       if (w && !w.classList.contains('tracked')) w.classList.add('tracked');
-      const txt = trackedBubble().text;
-      veh[tracked.id].marker.setTooltipContent(txt);
-      updateTrackBar();
-      if (txt === 'departed') setTimeout(() => untrack(true), 1500);
+      const b = trackedBubble();
+      veh[tracked.id].marker.setTooltipContent(bubbleHTML(b));
+      updateTrackBar(b);
+      if (b.state === 'departed') setTimeout(() => untrack(true), 1500);
     }
 
     async function refreshTrackedEta() {
       try {
         const data = await (await fetch(API + '/api/stop/' +
           encodeURIComponent(tracked.stopId) + '/eta')).json();
+        // NOTE: we do NOT re-base tracked.arrivalEpoch here — it stays the prediction
+        // captured at track start, so ETA counts down to it and "Late" counts up past
+        // it against that fixed baseline (anchored timer), ignoring feed revisions.
         const a = (data.arrivals || []).find(x => x.trip_id === tracked.tripId);
-        if (a) tracked.arrivalEpoch = a.arrival;          // fresh prediction
-        else {                                            // server dropped it (filters < now-30s)
-          const v = veh[tracked.id];
-          const dist = (v && tracked.stopLatLng) ? v.marker.getLatLng().distanceTo(tracked.stopLatLng) : Infinity;
-          if (dist > ARRIVE_M) {                          // really gone → end + snap back
-            if (v) v.marker.setTooltipContent('departed');
+        if (!a) {                                         // trip dropped from feed (< now-30s)
+          const b = trackedBubble();                      // gone only if it has PASSED the stop
+          const gone = b.rem != null ? b.rem < -DEPART_M : (b.dist != null && b.dist > DEPART_M);
+          if (gone) {
+            if (veh[tracked.id]) veh[tracked.id].marker.setTooltipContent('departed');
             setTimeout(() => untrack(true), 1500);
           }
-          // else: late-but-close bus — keep last epoch; the 1s updater shows "due"
+          // else: late-but-still-approaching bus — keep counting up; arrives → "due"
         }
       } catch (e) { /* keep last known ETA on a transient error */ }
     }
 
-    function updateTrackBar() {
+    function updateTrackBar(b) {
       const bar = document.getElementById('trackbar');
       if (!tracked) { bar.style.display = 'none'; return; }
-      const b = trackedBubble();
+      b = b || trackedBubble();
+      const nm = esc(tracked.stopName || '');
       const distTxt = b.dist != null ? ' · ' + Math.round(b.dist) + ' m' : '';
-      document.getElementById('trackinfo').textContent =
-        'Route ' + tracked.route + ' · ' + b.text + distTxt;
+      document.getElementById('trackinfo').innerHTML =
+        '<div class="tb-stop" title="' + nm + '">' + nm + '</div>' +
+        '<div class="tb-time' + (b.late ? ' late' : '') + '">Route ' + esc(tracked.route) +
+        ' · ' + b.text + distTxt + '</div>';
       document.getElementById('followbtn').style.display =
         tracked.following ? 'none' : 'inline-block';
-      bar.style.display = 'block';
+      bar.style.display = 'flex';
     }
 
     map.on('dragstart', pauseFollow);   // user explores → pause centring, keep tracking
@@ -618,7 +899,7 @@
     });
     map.on('locationerror', () => { /* denied / unavailable → keep Calgary default */ });
 
-    map.locate({ setView: true, maxZoom: 13 });   // try to start where the user is
+    map.locate({ setView: true, maxZoom: 16 });   // start zoomed in (16) on the user, if allowed
 
     loadNetwork();
     refresh();

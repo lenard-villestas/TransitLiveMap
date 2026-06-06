@@ -19,6 +19,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from google.protobuf.message import DecodeError
 
 from explore_feed import fetch_feed, FEED_URL
 from build_map import (get_gtfs_zip, load_lookups, build_shapes,
@@ -35,7 +36,7 @@ TRIP_UPDATES_URL = "https://data.calgary.ca/download/gs4m-mdc2/application%2Foct
 # hand cheap cached data to every client. Clients NEVER hit Calgary directly.
 NETWORK = {"shapes": [], "stops": []}            # static, set once at startup
 SNAPSHOT = {"vehicles": [], "ts": 0, "matched": 0}  # latest live snapshot
-TRIP_UPDATES = {"index": {}, "ts": 0}            # stop_id -> [(arrival, trip_id, vehicle_id)]
+TRIP_UPDATES = {"index": {}, "by_trip": {}, "ts": 0}  # stop_id->arrivals + trip_id->stops
 LOOKUPS = {}                                      # routes + trips for the join
 
 
@@ -52,12 +53,14 @@ def load_network():
 
 
 def build_trip_index(feed):
-    """Trip Updates feed -> {stop_id: [(arrival_epoch, trip_id, vehicle_id), ...]}.
+    """Trip Updates feed -> two indexes:
+      index   = {stop_id: [(arrival_epoch, trip_id, vehicle_id), ...]}   (stop ETA)
+      by_trip = {trip_id: [(arrival_epoch, stop_id), ...]}              (a trip's stops)
 
     Calgary strips fields, so every optional is guarded with HasField — never
     trust protobuf defaults. Prefers arrival.time, falls back to departure.time.
     """
-    index = {}
+    index, by_trip = {}, {}
     for e in feed.entity:
         if not e.HasField("trip_update"):
             continue
@@ -75,7 +78,9 @@ def build_trip_index(feed):
                 t = stu.departure.time
             if t:
                 index.setdefault(sid, []).append((t, tid, vid))
-    return index
+                if tid:
+                    by_trip.setdefault(tid, []).append((t, sid))
+    return index, by_trip
 
 
 def poll_loop():
@@ -99,6 +104,10 @@ def poll_loop():
                 print(f"[poll] {len(vehicles)} vehicles, {matched} matched, ts={ts}")
             else:
                 print("[poll] no new data (same timestamp) — skipping rebuild")
+        except DecodeError:
+            # Socrata sometimes returns a non-protobuf body (HTML/empty/throttle).
+            # Transient — keep the last good snapshot and retry next tick.
+            print("[poll] vehicles: non-protobuf response (transient) — keeping last data")
         except Exception as exc:
             print(f"[poll] vehicles failed: {exc}")
 
@@ -107,9 +116,11 @@ def poll_loop():
             tu_ts = tu_feed.header.timestamp
             if tu_ts != last_tu_ts:
                 last_tu_ts = tu_ts
-                index = build_trip_index(tu_feed)
-                TRIP_UPDATES = {"index": index, "ts": tu_ts}
+                index, by_trip = build_trip_index(tu_feed)
+                TRIP_UPDATES = {"index": index, "by_trip": by_trip, "ts": tu_ts}
                 print(f"[poll] trip-updates: {len(index)} stops with arrivals, ts={tu_ts}")
+        except DecodeError:
+            print("[poll] trip-updates: non-protobuf response (transient) — keeping last data")
         except Exception as exc:
             print(f"[poll] trip-updates failed: {exc}")
 
@@ -183,7 +194,38 @@ def stop_eta(stop_id: str):
     return {"stop_id": stop_id, "arrivals": out[:3], "ts": TRIP_UPDATES["ts"]}
 
 
+@app.get("/api/trip/{trip_id}/next-stop")
+def trip_next_stop(trip_id: str):
+    """The soonest upcoming stop for a trip (for vehicle-click → next stop + ETA).
+
+    Scans this trip's stop_time_updates, picks the earliest still-future one, and
+    joins route short/headsign. Returns {stop_id: null} if the trip isn't in the
+    trip-updates feed (the frontend then shows a basic popup, no Track).
+    """
+    now = time.time()
+    stops = TRIP_UPDATES["by_trip"].get(trip_id, [])
+    upcoming = [(epoch, sid) for epoch, sid in stops if epoch >= now - 30]
+    if not upcoming:
+        return {"stop_id": None}
+    epoch, sid = min(upcoming, key=lambda x: x[0])
+    trip = LOOKUPS["trips"].get(trip_id, {})
+    route = LOOKUPS["routes"].get(trip.get("route_id"), {})
+    return {
+        "stop_id": sid,
+        "arrival": epoch,
+        "eta_seconds": int(epoch - now),
+        "route": route.get("short", "?"),
+        "headsign": trip.get("headsign", ""),
+        "ts": TRIP_UPDATES["ts"],
+    }
+
+
 @app.get("/")
 def index():
-    """Serve the frontend page from the same origin as the API."""
-    return FileResponse(os.path.join(os.path.dirname(__file__), "index.html"))
+    """Serve the frontend page from the same origin as the API.
+
+    no-store so local edits (constants, tuning) always take effect on reload —
+    the browser otherwise caches index.html and runs a stale copy.
+    """
+    return FileResponse(os.path.join(os.path.dirname(__file__), "index.html"),
+                        headers={"Cache-Control": "no-store"})
