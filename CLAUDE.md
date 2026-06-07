@@ -9,24 +9,43 @@ anything so you don't undo a considered choice.
 
 ## Current state
 
-Phases 0–6 are complete and working. The app shows the live fleet with rotating
-bus/train icons that **snap to and glide along the route polyline** across the CARTO
-basemap; clustered stops with live ETA popups; per-bus tracking (follow-cam + flash +
-anchored ETA/Late bubble + blue bus→stop route line); click-a-vehicle → its next stop +
-Track; route-number labels at zoom ≥ 16; and a geolocation "locate me" control.
-The frontend was refactored into **ES modules** (Phase 7.0); MapLibre is still the
-planned renderer swap (Phase 7).
+Phases 0–7 are complete and working. The app shows the live fleet with rotating
+bus/train icons that **snap to and glide along the route polyline**; clustered stops
+with live ETA popups; per-bus tracking (follow-cam + glow + anchored ETA/Late bubble +
+blue bus→stop route line); click-a-vehicle → its next stop + Track; route-number labels
+at zoom ≥ 16; and a geolocation "locate me" control.
 
-**Run the app (from repo root):**
+**There are now TWO frontends, same backend JSON contract:**
+- **`frontend/`** — the original **Leaflet + vanilla ES-module** app (Phase 7.0). Still
+  works; kept as the fallback during the migration.
+- **`frontend-react/`** — the new **React + TypeScript + MapLibre GL** app (Phase 7).
+  Vector basemap (MapTiler key, or keyless OpenFreeMap fallback), GPU symbol layers
+  (vehicles/stops as GeoJSON sources — no marker-cluster plugin, native clustering +
+  declutter), the snap-to-shape rAF engine ported into `lib/engine.ts`, and the chrome
+  (caption, track bar, popups, bubble) as React components driven by a zustand store.
+
+**Run it (from repo root):**
 ```bash
+# Backend (both frontends use it):
 python -m uvicorn server:app --reload --app-dir backend
-# open http://localhost:8000
+#   → serves frontend-react/dist if it's been built, else the Leaflet frontend/, at :8000.
+#   Force one with the FRONTEND_DIR env var.
+
+# React app in DEV (hot reload) — run alongside uvicorn:
+cd frontend-react && npm install && npm run dev      # Vite on :5173, proxies /api → :8000
+
+# React app for PROD — build once, then uvicorn serves the bundle at :8000:
+cd frontend-react && npm run build
 ```
 `--app-dir backend` puts `backend/` on `sys.path` so `server.py` and its sibling tools
 import each other unchanged. Standalone tools: `python backend/build_map.py`.
 > ⚠️ On Windows (Microsoft Store Python), `uvicorn` is not on PATH.
 > Always use `python -m uvicorn`. Don't fix this by editing PATH — it's a Store-Python
 > sandbox issue. Use the python.org installer for a clean setup.
+> Node/npm live at `C:\Program Files\nodejs` — prepend it to PATH in a shell that
+> predates the install (`$env:Path = "C:\Program Files\nodejs;$env:Path"`).
+> MapTiler key goes in `frontend-react/.env` as `VITE_MAPTILER_KEY=` (gitignored);
+> blank → the keyless OpenFreeMap basemap.
 
 ---
 
@@ -39,11 +58,19 @@ TransitLiveMap/
 │   ├── build_map.py        static-GTFS loaders + build_vehicles/build_stops/build_shapes
 │   ├── explore_feed.py     Phase 0 feed explorer + fetch_feed(url) (shared)
 │   └── verify_join.py       Phase 2 trip_id→route join coverage diagnostic
-├── frontend/
+├── frontend/               LEGACY Leaflet app (Phase 7.0, vanilla ES modules)
 │   ├── index.html          markup only; loads /styles/app.css + <script type=module>
 │   ├── styles/app.css      all CSS
 │   ├── scripts/            ES modules (see "Frontend modules" below)
 │   └── static/             bus.png (nose EAST, +90°), train.png (SE, +135°), bus-stop.png (pin)
+├── frontend-react/         NEW React + TS + MapLibre app (Phase 7)
+│   ├── index.html, vite.config.ts (dev proxy /api→:8000), .env (VITE_MAPTILER_KEY)
+│   ├── public/static/      the same three PNGs (registered as MapLibre images)
+│   └── src/
+│       ├── config.ts types.ts store.ts (zustand)   main.tsx App.tsx
+│       ├── lib/    geometry.ts format.ts network.ts engine.ts (rAF snap-to-shape + tracking)
+│       ├── map/    MapView.tsx (the <Map> + sources/layers + popups) · layers.ts
+│       └── ui/     EtaRow · StopPopup · VehiclePopup · TrackBar
 ├── docs/                   code-reference.html + presentation.html (learning material)
 ├── requirements.txt, CLAUDE.md, README.md, .gitignore
 ```
@@ -63,6 +90,28 @@ ETA popup) · `vehicles` (refresh + the rAF animation/snapping engine + vehicle-
 (wires everything, exposes popup-button handlers on `window`). The `vehicles↔tracking`
 import cycle is intentional and safe (cross-calls only happen inside functions).
 CDN libs (`L`, markercluster, `turf`) load as classic `<script>` and are used as globals.
+
+### React frontend (`frontend-react/src/`, the Phase 7 app)
+Same behaviours, MapLibre instead of Leaflet. **Two layers, kept apart:** the imperative
+60fps map work lives in **`lib/engine.ts`** (the singleton `engine`) — it owns the
+`Map<id, VehState>`, ports `setTarget`/`animate`/the whole tracking lifecycle from the
+old `vehicles.js`+`tracking.js`, and every frame writes a GeoJSON FeatureCollection into
+the **`vehicles`** map source via `setData` (plus `tracked-route`, `selstop`, `veh-halo`).
+**Never route the rAF loop through React state.** The reactive *chrome* lives in
+**`store.ts`** (zustand: `caption`, `zoom`, `tracked`, `bubble`, `trackedPos`, `popup`),
+updated at 1–5 Hz, and is rendered by small components (`TrackBar`, `EtaRow`, `StopPopup`,
+`VehiclePopup`, plus the bubble/popups inside `MapView`). `lib/network.ts` loads
+`/api/network` → GeoJSON + the `shapesById`/`stopById` lookups the engine needs.
+`map/layers.ts` holds the data-driven layer styles (native GeoJSON clustering, label
+`minzoom` declutter). The popup Track buttons call `engine.*` **directly** — no
+`window.*` handlers, no HTML strings.
+
+**Vehicle icons are side-view art, so they are NOT rotated** (rotating tips the wheels
+over). Instead the engine picks a mirrored variant by travel direction: each vehicle
+feature carries an `img` property of `'<kind>'` (faces east) or `'<kind>-flip'` (mirrored,
+faces west, chosen when `bearing > 180`), and `MapView` registers `bus`/`train` plus
+canvas-mirrored `bus-flip`/`train-flip` images. If you swap in **top-down** icons later,
+restore `icon-rotate` in `vehicleLayer` and emit `bearing`/`forward` instead.
 
 ---
 
@@ -238,6 +287,7 @@ into themed red counted badges; zooming in splits them into individual
 | 5.2–5.3 | Tunable cluster zoom + `#zoomcap` readout; declutter on track; distance-gated due/depart; blue tracked-route; route-number labels; "ETA:/Late:" labels + red Late + anchored timer | `index.html` |
 | 6 | **Snap-to-shape animation** (ride the road via `shape_id` + Turf.js) + blue bus→stop route that trims on the render loop; `/api/trip/{id}/next-stop` (vehicle-click → next stop + Track); `Cache-Control: no-store` | `build_map.py`, `server.py`, `index.html` |
 | 7.0 | Restructure → `backend/` + `frontend/` (HTML/CSS/ES-module split); server serves the frontend folder; `docs/` learning material | all |
+| 7 | **React + TS + MapLibre GL frontend** (`frontend-react/`): vector basemap, GPU GeoJSON layers (native stop clustering + label declutter, icon-rotate by data), snap-to-shape rAF engine ported to `lib/engine.ts`, zustand chrome, React popups/track-bar; backend serves `dist/` when built (`FRONTEND_DIR` override). Same JSON contract. | `frontend-react/*`, `server.py` |
 
 Phase 5 implementation notes:
 - **"Nearest vehicle" = soonest predicted arrival**, NOT geographically closest
@@ -250,15 +300,11 @@ Phase 5 implementation notes:
 
 ## Next phases (planned)
 
-> Phase 6 (snap-to-route) is **done** — see the animation-engine section above.
-
-### Phase 7 — React + MapLibre frontend
-Swap the Leaflet page for a proper React app with MapLibre GL JS.
-- The backend JSON contract (`/api/network`, `/api/vehicles`) stays identical —
-  the renderer is swappable without touching Python.
-- MapLibre uses vector tiles; needs a tile source (MapTiler free tier,
-  or self-hosted with OpenStreetMap data).
-- Vite dev server (hot reload) + `uvicorn --reload` = full live-reload stack.
+> Phases 6 (snap-to-route) and **7 (React + MapLibre)** are **done** — see the
+> animation-engine section and the "React frontend" section above. The backend JSON
+> contract was unchanged by the rewrite (renderer is swappable without touching Python).
+> Remaining Phase 7 polish if desired: tune the MapTiler basemap style, code-split the
+> 1 MB maplibre-gl chunk, then retire `frontend/` once the React app is signed off.
 
 ### Phase 8 — Docker + docker-compose
 Containerize backend (Python/FastAPI), frontend (Nginx or Vite build),
@@ -296,10 +342,10 @@ line, once the app is stable.
 ## Known issues / do-not-touch
 
 - **Do not change the vehicle array format** `[lat,lon,short,color,head,id,type,trip_id,shape_id]`
-  without updating both `build_map.py` (build_vehicles) and `frontend/scripts/vehicles.js`
-  (the destructure `const [lat,lon,short,color,head,id,type,tripId,shapeId] = arr`).
-  They must stay in sync. Likewise the stops array `[lat,lon,name,stop_id]` and shapes
-  `{shape_id,coords,color}`.
+  without updating **all three**: `build_map.py` (build_vehicles), `frontend/scripts/vehicles.js`
+  (the destructure), and `frontend-react/src/types.ts` (`VehicleTuple`) + its consumers in
+  `lib/engine.ts`/`lib/network.ts`. They must stay in sync. Likewise the stops array
+  `[lat,lon,name,stop_id]` and shapes `{shape_id,coords,color}` — both frontends parse them.
 - **Frontend is ES modules** (`frontend/scripts/`). Shared mutable state lives in
   `state.js` (`app.*` + the `veh`/`stopMarkers`/… collections), NOT window globals —
   the only `window.*` are the four popup-button handlers wired in `main.js`. The

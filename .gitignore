@@ -6,3 +6,7 @@ __pycache__/
 
 # build_map.py output snapshot (generated)
 map.html
+
+# React frontend build artifacts (frontend-react/ has its own .gitignore too)
+node_modules/
+frontend-react/dist/

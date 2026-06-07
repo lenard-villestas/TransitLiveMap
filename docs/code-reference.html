@@ -64,7 +64,13 @@
     <a href="#explore">explore_feed / verify_join</a>
     <a href="#contracts">Data contracts</a>
     <a href="#feed">Calgary feed quirks</a>
-    <a class="head">Frontend (ES modules)</a>
+    <a class="head">Frontend (React + MapLibre)</a>
+    <a href="#re-overview">Architecture: engine + store</a>
+    <a href="#re-engine">lib/engine.ts</a>
+    <a href="#re-map">MapView / layers</a>
+    <a href="#re-ui">store / network / UI</a>
+    <a href="#re-icons">vehicle icons (flip)</a>
+    <a class="head">Frontend (Leaflet · legacy)</a>
     <a href="#fe-overview">Module graph</a>
     <a href="#m-config">config / state / format</a>
     <a href="#m-geometry">geometry / icons</a>
@@ -78,18 +84,25 @@
     <h2 id="layout">Project layout</h2>
     <p class="lede">A FastAPI backend (the "kitchen") decodes Calgary's GTFS-realtime
       feeds, joins them to the static schedule, caches the result, and serves clean JSON
-      + the static frontend. The frontend is vanilla ES modules over Leaflet.</p>
+      + a frontend. There are <b>two interchangeable frontends</b> on the same JSON API:
+      the current <b>React + TypeScript + MapLibre GL</b> app, and the original
+      <b>Leaflet + vanilla ES module</b> app kept as a fallback.</p>
     <pre><code>backend/
-  server.py        FastAPI app, 15s poll loop, /api/* endpoints, serves ../frontend
+  server.py        FastAPI app, 15s poll loop, /api/* endpoints; serves the React
+                   build (frontend-react/dist) if present, else frontend/
   build_map.py     static-GTFS loaders + build_vehicles / build_stops / build_shapes
   explore_feed.py  Phase-0 feed explorer; fetch_feed(url) is shared
   verify_join.py   trip_id → route join coverage diagnostic
-frontend/
-  index.html       markup only; loads /styles/app.css + &lt;script type="module"&gt;
-  styles/app.css   all styling
-  scripts/*.js     ES modules (config, state, format, geometry, icons, map,
-                   network, vehicles, tracking, geolocation, main)
-  static/          bus.png, train.png, bus-stop.png
+frontend-react/    React + TS + MapLibre (the current app)
+  vite.config.ts   dev server, proxies /api → :8000
+  .env             VITE_MAPTILER_KEY (blank → keyless OpenFreeMap basemap)
+  src/
+    config.ts types.ts store.ts (zustand)   main.tsx App.tsx
+    lib/   geometry.ts format.ts network.ts engine.ts (rAF + tracking)
+    map/   MapView.tsx (the &lt;Map&gt; + sources/layers + popups) · layers.ts
+    ui/    EtaRow · StopPopup · VehiclePopup · TrackBar
+  public/static/   bus.png, train.png, bus-stop.png
+frontend/          legacy Leaflet app (index.html + styles/ + scripts/*.js + static/)
 docs/              this reference + presentation.html</code></pre>
 
     <h2 id="flow">End-to-end data flow</h2>
@@ -140,8 +153,10 @@ docs/              this reference + presentation.html</code></pre>
         <td><code>{stop_id, arrivals:[{route,headsign,color,type,trip_id,vehicle_id,arrival,eta_seconds}], ts}</code> — soonest 3, past filtered.</td></tr>
       <tr><td><span class="api">GET /api/trip/{trip_id}/next-stop</span></td>
         <td><code>{stop_id, arrival, eta_seconds, route, headsign, ts}</code> or <code>{stop_id:null}</code> — soonest upcoming stop for a trip.</td></tr>
-      <tr><td><span class="api">GET / · /styles/* · /scripts/* · /static/*</span></td>
-        <td>The <code>frontend/</code> folder (static mount, <code>html=True</code>).</td></tr>
+      <tr><td><span class="api">GET / · /assets/* · /static/*</span></td>
+        <td>The chosen frontend (static mount, <code>html=True</code>): the React
+          <code>dist/</code> when built, else the Leaflet <code>frontend/</code>. Override
+          with the <code>FRONTEND_DIR</code> env var.</td></tr>
     </table>
 
     <h2 id="buildmap">build_map.py</h2>
@@ -163,7 +178,9 @@ docs/              this reference + presentation.html</code></pre>
 
     <h2 id="contracts">Data contracts (keep backend + frontend in sync)</h2>
     <div class="card">
-      <p><b>Vehicle array</b> (build_vehicles ↔ vehicles.js destructure):</p>
+      <p><b>Vehicle array</b> — kept in sync across <code>build_vehicles</code> (Python),
+        <code>vehicles.js</code> (Leaflet destructure), and <code>types.ts</code>
+        (<code>VehicleTuple</code>, React):</p>
       <pre><code>[lat, lon, route_short, color, headsign, vehicle_id, route_type, trip_id, shape_id]</code></pre>
       <p><b>Stop array:</b> <code>[lat, lon, name, stop_id]</code> &nbsp;·&nbsp;
         <b>Shape:</b> <code>{shape_id, coords, color}</code></p>
@@ -184,7 +201,85 @@ docs/              this reference + presentation.html</code></pre>
       incl. MAX BRT). Publish cadence ≈ 30 s; we poll at 15 s and dedupe on the header
       timestamp so faster polling is free.</p>
 
-    <h2 id="fe-overview">Frontend — module graph</h2>
+    <h2 id="re-overview">React frontend — architecture (engine + store)</h2>
+    <p class="lede">Same behaviours as the Leaflet app, MapLibre GL instead of Leaflet. The
+      design keeps two worlds apart: an <b>imperative 60 fps engine</b> that drives the map,
+      and a small <b>reactive store</b> that drives the React chrome.</p>
+    <div class="card">
+      <p><b>The golden rule:</b> never route the 60 fps loop through React state — it would
+        re-render hundreds of times a second. The engine writes straight into MapLibre
+        GeoJSON sources via <code>setData</code>; React only re-renders the chrome (caption,
+        track bar, popups, bubble) at 1–5 Hz.</p>
+    </div>
+    <pre><code>App ─┬─ MapView  (the &lt;Map&gt; + Sources/Layers + Popups + GeolocateControl)
+     │     ├─ map sources: shapes · stops(clustered) · vehicles · tracked-route
+     │     │               · selstop · veh-halo      ← engine setData()s these
+     │     └─ ui/ StopPopup · VehiclePopup · EtaRow
+     ├─ TrackBar          ← reads store (tracked, bubble)
+     └─ caption / zoomcap ← reads store
+lib/engine.ts   the singleton `engine`: Map&lt;id,VehState&gt; + rAF loop + tracking
+store.ts        zustand: caption, zoom, tracked, bubble, trackedPos, popup
+lib/network.ts  loadNetwork() → GeoJSON + shapesById / stopById lookups</code></pre>
+
+    <h2 id="re-engine"><span class="mod">lib/engine.ts</span> — the imperative core</h2>
+    <p>Ports <code>vehicles.js</code> + <code>tracking.js</code> into one class. It owns the
+      <code>Map&lt;id, VehState&gt;</code> and the <code>vehByTrip</code> index, and every
+      frame builds a GeoJSON <code>FeatureCollection</code> of the current interpolated
+      positions and calls <code>map.getSource('vehicles').setData(fc)</code>.</p>
+    <ul>
+      <li><b>refresh(data)</b> — poll handler: create/update per-vehicle state, rebuild
+        <code>vehByTrip</code>, drop vehicles that left the feed, push the caption to the store.</li>
+      <li><b>setTarget()</b> — snap a new fix onto the shape (≤ <code>OFFROAD_M</code> →
+        <code>mode:'shape'</code> with along-line distances, else straight
+        <code>mode:'line'</code>); self-tuning <code>dur = clamp(now-lastMove, 12 s, 40 s)</code>.</li>
+      <li><b>frame()</b> — the rAF loop: advance each vehicle, <code>setData</code> the
+        vehicles source, run the follow-cam (<code>map.jumpTo</code>), trim the blue route,
+        pulse the halos, and push the bubble (1 Hz) + tracked position (5 Hz) to the store.</li>
+      <li><b>track / untrack / drawTrackedRoute / trackedBubble / openVehicleNext</b> — the
+        full tracking lifecycle, identical logic to the Leaflet version (anchored ETA/Late,
+        distance-gated due/departed, <code>turf.lineSliceAlong</code> blue route).</li>
+    </ul>
+
+    <h2 id="re-map"><span class="mod">map/MapView.tsx</span> / <span class="mod">map/layers.ts</span></h2>
+    <ul>
+      <li><b>MapView</b> — a <code>react-map-gl/maplibre</code> <code>&lt;Map&gt;</code> over a
+        MapTiler (or keyless OpenFreeMap) vector style. Declares the GeoJSON
+        <code>&lt;Source&gt;</code>/<code>&lt;Layer&gt;</code>s, registers the icon images on
+        load, <code>engine.attach(map)</code>s, polls <code>/api/vehicles</code> every 15 s,
+        and renders the popups + floating bubble as <code>&lt;Popup&gt;</code>s. Clicks are
+        dispatched by <code>interactiveLayerIds</code> (vehicle → next stop, stop → ETA,
+        cluster → expand zoom).</li>
+      <li><b>layers</b> — data-driven layer styles: route lines, <b>native GeoJSON
+        clustering</b> (<code>cluster:true</code> on the stops source — replaces the
+        markercluster plugin), the stop pins, the vehicles symbol layer, the route-number
+        label layer (<code>minzoom</code> declutter), and the tracked-route / highlight layers.</li>
+    </ul>
+
+    <h2 id="re-ui"><span class="mod">store.ts</span> / <span class="mod">network.ts</span> / UI</h2>
+    <ul>
+      <li><b>store</b> (zustand) — the reactive chrome state: <code>caption, zoom, tracked,
+        bubble, trackedPos, popup</code>. The encapsulated replacement for the Leaflet
+        <code>app</code> singleton, but only for what React renders.</li>
+      <li><b>network</b> — <code>loadNetwork()</code> fetches <code>/api/network</code> once
+        → a shapes GeoJSON + a clustered stops GeoJSON, and fills the <code>shapesById</code>
+        (Turf lines for snapping) and <code>stopById</code> (lng/lat/name) lookups the engine needs.</li>
+      <li><b>EtaRow</b> — ONE reusable arrival row (route badge + headsign + ETA/Late + Track),
+        replacing the three hand-built HTML-string versions. <b>StopPopup</b> fetches a stop's
+        next-3 arrivals; <b>VehiclePopup</b> shows a bus's next stop. Track buttons call
+        <code>engine.*</code> directly — no <code>window.*</code> handlers, no string HTML, no
+        manual escaping (React escapes for us).</li>
+    </ul>
+
+    <h2 id="re-icons">Vehicle icons — flip, don't rotate</h2>
+    <p>The vehicle PNGs are <b>side-view</b> art (wheels on the bottom), so rotating them to
+      the travel bearing tips them over. Instead the engine emits an <code>img</code> property
+      of <code>'&lt;kind&gt;'</code> (faces east) or <code>'&lt;kind&gt;-flip'</code> (mirrored,
+      faces west, chosen when <code>bearing &gt; 180</code>), and MapView registers
+      <code>bus</code>/<code>train</code> plus canvas-mirrored <code>bus-flip</code>/<code>train-flip</code>
+      images. The symbol layer just does <code>icon-image: ['get','img']</code> — no
+      <code>icon-rotate</code>. (For top-down icons later, restore rotation instead.)</p>
+
+    <h2 id="fe-overview">Leaflet frontend (legacy) — module graph</h2>
     <p>CDN libraries (<code>L</code> Leaflet, <code>markercluster</code>, <code>turf</code>)
       load as classic scripts and are used as globals. App code is ES modules:</p>
     <pre><code>main ─┬─ map ──────────── (creates the Leaflet map, layers, cluster)

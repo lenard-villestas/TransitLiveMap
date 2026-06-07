@@ -56,10 +56,10 @@
       techniques that make buses glide smoothly along real roads in real time.</p>
     <div>
       <span class="tag">Python · FastAPI</span>
-      <span class="tag">Leaflet</span>
+      <span class="tag">React · TypeScript</span>
+      <span class="tag">MapLibre GL</span>
       <span class="tag">Turf.js</span>
       <span class="tag">GTFS / GTFS-Realtime</span>
-      <span class="tag">vanilla ES modules</span>
     </div>
   </header>
 
@@ -114,14 +114,19 @@
     <div class="step">02 · The stack</div>
     <h2>What each piece is for</h2>
     <div class="stack">
-      <div class="chip"><b>FastAPI</b> — tiny Python web framework; serves the JSON API + the frontend files.</div>
+      <div class="chip"><b>FastAPI</b> — tiny Python web framework; serves the JSON API + the frontend.</div>
       <div class="chip"><b>requests</b> — downloads the feeds (on a background thread).</div>
       <div class="chip"><b>gtfs-realtime-bindings</b> — decodes Google's protobuf feed format.</div>
-      <div class="chip"><b>Leaflet</b> — the slippy map (tiles, markers, popups).</div>
-      <div class="chip"><b>Leaflet.markercluster</b> — groups ~6000 stops into counted badges.</div>
+      <div class="chip"><b>React + TypeScript</b> — the UI: reusable components, typed data contracts.</div>
+      <div class="chip"><b>MapLibre GL</b> — the map, drawn on the GPU from vector tiles.</div>
+      <div class="chip"><b>react-map-gl</b> — React wrapper around MapLibre (Map, Source, Layer, Popup).</div>
       <div class="chip"><b>Turf.js</b> — the GIS math: project a point onto a line, walk along it.</div>
-      <div class="chip"><b>ES modules</b> — the frontend split into small files with import/export.</div>
+      <div class="chip"><b>zustand</b> — a tiny store for the reactive UI state.</div>
     </div>
+    <div class="why"><b>Two frontends, one backend.</b> The current app is React + MapLibre
+      (<code>frontend-react/</code>); the original Leaflet app (<code>frontend/</code>) still
+      works and is kept as a fallback. The backend JSON contract never changed — the
+      renderer was swappable without touching Python.</div>
     <h3>Two kinds of transit data</h3>
     <div class="grid2">
       <div class="card"><h3 style="margin-top:8px">Static GTFS</h3>
@@ -238,7 +243,8 @@
     <div class="step">06 · Performance</div>
     <h2>~6000 stops without melting the browser</h2>
     <p class="lede">Putting 6000 image markers in the DOM at once is a known performance
-      cliff. <b>Clustering</b> keeps the live marker count near what's on screen.</p>
+      cliff — it's why the Leaflet app needed a clustering plugin. <b>Clustering</b> keeps
+      what's drawn near what's on screen.</p>
     <svg viewBox="0 0 820 150" role="img" aria-label="clustering">
       <circle cx="150" cy="75" r="34" fill="rgba(220,38,38,.85)" stroke="#fff" stroke-width="2" />
       <text x="150" y="81" fill="#fff" font-size="18" text-anchor="middle" font-weight="bold">137</text>
@@ -252,8 +258,12 @@
       </g>
       <text x="580" y="135" fill="#9fb0c8" font-size="13" text-anchor="middle">zoomed in: individual pins</text>
     </svg>
-    <div class="why"><b>Same idea, two costs avoided:</b> fewer DOM nodes (speed) and less
+    <div class="why"><b>Same idea, two costs avoided:</b> fewer things drawn (speed) and less
       visual clutter (clarity). Below zoom 16 stops cluster; at/above 16 they split apart.</div>
+    <div class="why"><b>MapLibre makes this almost free.</b> The React app draws all 6000 stops
+      as one GPU layer with <b>built-in clustering</b> (<code>cluster:true</code> on the GeoJSON
+      source) and automatic label declutter — no plugin, and the old "perf cliff" constraint
+      simply goes away.</div>
   </section>
 
   <!-- 7. TRACKING -->
@@ -283,21 +293,32 @@
   <!-- 8. FRONTEND STRUCTURE -->
   <section>
     <div class="step">08 · How the code is organised</div>
-    <h2>Small modules, one job each</h2>
-    <p class="lede">The frontend is plain ES modules — no build step. Shared state lives in
-      one <code>state.js</code> instead of scattered globals.</p>
-    <div class="stack">
-      <div class="chip"><b>config</b> tunable numbers</div>
-      <div class="chip"><b>state</b> shared data</div>
-      <div class="chip"><b>format</b> text helpers</div>
-      <div class="chip"><b>geometry</b> the Turf math</div>
-      <div class="chip"><b>icons</b> map markers</div>
-      <div class="chip"><b>map</b> Leaflet setup</div>
-      <div class="chip"><b>network</b> load stops/shapes</div>
-      <div class="chip"><b>vehicles</b> animation engine</div>
-      <div class="chip"><b>tracking</b> follow + ETA</div>
-      <div class="chip"><b>geolocation</b> locate me</div>
-      <div class="chip"><b>main</b> wires it together</div>
+    <h2>Two worlds: a map engine and React chrome</h2>
+    <p class="lede">The React app's most important idea is a split: the 60 fps map work is
+      <b>imperative</b> and lives outside React; everything React renders is <b>reactive</b>
+      and lives in a tiny store.</p>
+    <div class="grid2">
+      <div class="card"><h3 style="margin-top:8px; color:var(--green)">The engine (imperative)</h3>
+        <p><code>lib/engine.ts</code> owns the per-vehicle animation + tracking and, every
+          frame, writes a GeoJSON blob straight into the MapLibre map
+          (<code>source.setData()</code>). It never touches React.</p></div>
+      <div class="card"><h3 style="margin-top:8px; color:var(--accent)">The store (reactive)</h3>
+        <p><code>store.ts</code> (zustand) holds just the chrome state — caption, zoom,
+          what's tracked, the ETA text, the open popup — updated 1–5×/s. Components
+          re-render from it.</p></div>
+    </div>
+    <div class="why"><b>Why the split?</b> Driving a 60 fps loop through React state would
+      re-render the UI hundreds of times a second. Keeping the hot path in the engine and the
+      cool path in React is what makes it both smooth <i>and</i> tidy.</div>
+    <div class="stack" style="margin-top:18px">
+      <div class="chip"><b>config / types</b> numbers + data contracts</div>
+      <div class="chip"><b>store</b> reactive chrome state</div>
+      <div class="chip"><b>lib/geometry</b> the Turf math</div>
+      <div class="chip"><b>lib/network</b> load stops/shapes</div>
+      <div class="chip"><b>lib/engine</b> rAF + tracking</div>
+      <div class="chip"><b>map/MapView</b> the &lt;Map&gt; + layers</div>
+      <div class="chip"><b>map/layers</b> data-driven styles</div>
+      <div class="chip"><b>ui/*</b> EtaRow, popups, TrackBar</div>
     </div>
     <p style="margin-top:18px">Want the exact functions, endpoints, and data shapes? See the
       companion <code>code-reference.html</code>.</p>
@@ -308,9 +329,10 @@
     <div class="step">09 · Where it could go</div>
     <h2>Next steps</h2>
     <div class="grid2">
-      <div class="card"><h3 style="margin-top:8px">MapLibre GL</h3>
-        <p>Swap Leaflet for GPU vector rendering — smoother camera, nicer route lines. The
-          JSON API stays identical, so only the renderer changes.</p></div>
+      <div class="card"><h3 style="margin-top:8px; color:var(--green)">MapLibre GL ✓ done</h3>
+        <p>The Leaflet renderer was swapped for GPU vector rendering in React — smoother
+          camera, native clustering, data-driven icons. The JSON API stayed identical, so
+          only the renderer changed.</p></div>
       <div class="card"><h3 style="margin-top:8px">Docker + cloud</h3>
         <p>Containerise the backend + frontend, add PostGIS for history/spatial queries,
           deploy to Fly.io / Render.</p></div>
@@ -319,7 +341,7 @@
 
   <footer>
     Built as a GIS learning project · Calgary Transit Live Tracker ·
-    data © Calgary Open Data, map © OpenStreetMap &amp; CARTO
+    data © Calgary Open Data · basemap © MapTiler / OpenFreeMap &amp; OpenStreetMap
   </footer>
 </body>
 

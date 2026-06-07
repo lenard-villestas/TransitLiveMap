@@ -142,9 +142,16 @@ app = FastAPI(lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"],
                    allow_methods=["*"], allow_headers=["*"])
 
-# The frontend lives in ../frontend (index.html + styles/ + scripts/ + static/).
+# Which frontend to serve:
+#   - the React/MapLibre build (frontend-react/dist) once it's been built, else
+#   - the original Leaflet app (frontend/) as a fallback.
+# Override explicitly with the FRONTEND_DIR env var (e.g. to force the Leaflet app).
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-FRONTEND_DIR = os.path.join(ROOT, "frontend")
+REACT_DIST = os.path.join(ROOT, "frontend-react", "dist")
+LEAFLET_DIR = os.path.join(ROOT, "frontend")
+FRONTEND_DIR = os.environ.get("FRONTEND_DIR") or (
+    REACT_DIST if os.path.isdir(REACT_DIST) else LEAFLET_DIR)
+print(f"[startup] serving frontend from {FRONTEND_DIR}")
 
 
 @app.middleware("http")

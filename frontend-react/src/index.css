@@ -1,0 +1,196 @@
+/* Calgary Transit Live Tracker — React/MapLibre frontend styles.
+   Ported from the Leaflet app.css; Leaflet-specific marker rules dropped (the
+   vehicles/stops are now GPU symbol layers), MapLibre popup overrides added. */
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  background: #f7f7f5;
+}
+
+/* caption (top) + zoom readout (bottom-left) */
+#cap {
+  position: absolute;
+  z-index: 1000;
+  top: 8px;
+  left: 50px;
+  background: #fff;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font: 13px system-ui, sans-serif;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, .25);
+}
+
+#zoomcap {
+  position: absolute;
+  z-index: 1000;
+  bottom: 14px;
+  left: 10px;
+  background: #fff;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font: 12px system-ui, sans-serif;
+  color: #334155;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, .25);
+}
+
+/* red "Late:" emphasis (shared by bubble, track bar, stop popup) */
+.late {
+  color: #dc2626;
+  font-weight: 700;
+}
+
+#trackbar .late {
+  color: #f87171;
+}
+
+/* ---- stop / vehicle ETA popup ---- */
+.eta-list {
+  font: 13px system-ui, sans-serif;
+  min-width: 190px;
+}
+
+.eta-title {
+  font-weight: 700;
+  margin-bottom: 5px;
+}
+
+.eta-empty {
+  color: #64748b;
+}
+
+.eta-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 0;
+  border-top: 1px solid #eee;
+}
+
+.eta-row:first-of-type {
+  border-top: none;
+}
+
+.eta-soon {
+  background: #fff7ed;
+  margin: 0 -5px;
+  padding: 5px;
+  border-radius: 5px;
+}
+
+.eta-badge {
+  display: inline-block;
+  min-width: 20px;
+  text-align: center;
+  color: #fff;
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-weight: 700;
+}
+
+.eta-head {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 90px;
+}
+
+.eta-min {
+  margin-left: auto;
+  white-space: nowrap;
+  color: #475569;
+  font-weight: 600;
+}
+
+.eta-track {
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 1px 7px;
+}
+
+.eta-track:hover:not(:disabled) {
+  background: #f1f5f9;
+}
+
+.eta-track:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+}
+
+/* ---- "stop tracking" bar (bottom-centre) ---- */
+#trackbar {
+  position: absolute;
+  z-index: 1000;
+  bottom: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #1f2937;
+  color: #fff;
+  padding: 6px 12px;
+  border-radius: 16px;
+  display: none;
+  align-items: center;
+  gap: 6px;
+  font: 13px system-ui, sans-serif;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, .4);
+}
+
+.tb-stop {
+  font-size: 11px;
+  color: #cbd5e1;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tb-time {
+  font-weight: 700;
+}
+
+#trackbar button {
+  border: none;
+  background: #f59e0b;
+  color: #1f2937;
+  font-weight: 700;
+  border-radius: 12px;
+  padding: 2px 10px;
+  cursor: pointer;
+}
+
+/* ---- floating ETA bubble above the tracked bus (a borderless MapLibre popup) ---- */
+.eta-bubble {
+  pointer-events: none;
+}
+
+.eta-bubble .maplibregl-popup-content {
+  background: #fff;
+  color: #1f2937;
+  font: 12px system-ui, sans-serif;
+  border-radius: 10px;
+  padding: 4px 9px;
+  box-shadow: 0 1px 5px rgba(0, 0, 0, .35);
+  text-align: center;
+}
+
+.eta-bubble.maplibregl-popup-anchor-bottom .maplibregl-popup-tip {
+  border-top-color: #fff;
+}
+
+.bub-stop {
+  font-size: 10px;
+  color: #64748b;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bub-time {
+  font-weight: 700;
+}
