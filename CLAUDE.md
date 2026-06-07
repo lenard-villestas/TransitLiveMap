@@ -9,19 +9,24 @@ anything so you don't undo a considered choice.
 
 ## Current state
 
-Phases 0–5 (incl. 5.1) are complete and working. The app shows the live fleet
-with rotating bus/train icons gliding across the CARTO light basemap; clickable
-clustered stops with live ETA popups; per-bus tracking (follow-cam + flash +
-countdown bubble); and a geolocation "locate me" control.
+Phases 0–6 are complete and working. The app shows the live fleet with rotating
+bus/train icons that **snap to and glide along the route polyline** across the CARTO
+basemap; clustered stops with live ETA popups; per-bus tracking (follow-cam + flash +
+anchored ETA/Late bubble + blue bus→stop route line); click-a-vehicle → its next stop +
+Track; route-number labels at zoom ≥ 16; and a geolocation "locate me" control.
+The frontend was refactored into **ES modules** (Phase 7.0); MapLibre is still the
+planned renderer swap (Phase 7).
 
-**Run the app:**
+**Run the app (from repo root):**
 ```bash
-python -m uvicorn server:app --reload   # use -m, not bare uvicorn (Windows PATH quirk)
+python -m uvicorn server:app --reload --app-dir backend
 # open http://localhost:8000
 ```
+`--app-dir backend` puts `backend/` on `sys.path` so `server.py` and its sibling tools
+import each other unchanged. Standalone tools: `python backend/build_map.py`.
 > ⚠️ On Windows (Microsoft Store Python), `uvicorn` is not on PATH.
-> Always use `python -m uvicorn`. Do not try to fix this by modifying PATH;
-> it's a Store-Python sandbox issue. Use python.org installer for a clean setup.
+> Always use `python -m uvicorn`. Don't fix this by editing PATH — it's a Store-Python
+> sandbox issue. Use the python.org installer for a clean setup.
 
 ---
 
@@ -29,22 +34,35 @@ python -m uvicorn server:app --reload   # use -m, not bare uvicorn (Windows PATH
 
 ```
 TransitLiveMap/
-├── server.py          FastAPI backend (the "kitchen" — never let clients hit Calgary directly)
-├── index.html         Leaflet frontend served by FastAPI at /
-├── explore_feed.py    Phase 0 exploration tool (--watch, --vehicle, schema printer)
-├── build_map.py       Phase 1 snapshot tool (static network + one-shot vehicle overlay)
-├── verify_join.py     Phase 2 diagnostic (trip_id→route join coverage check)
-├── requirements.txt
-├── .gitignore
-└── static/
-    ├── bus.png        32×32 RGBA, icon head points EAST   (forward offset = 90°)
-    ├── train.png      32×32 RGBA, icon head points SE     (forward offset = 135°)
-    └── bus-stop.png   red downward map-pin (anchor at bottom tip), stop markers
+├── backend/                FastAPI app + GTFS tools (the "kitchen")
+│   ├── server.py           app, poll loop, /api/* endpoints, serves ../frontend
+│   ├── build_map.py        static-GTFS loaders + build_vehicles/build_stops/build_shapes
+│   ├── explore_feed.py     Phase 0 feed explorer + fetch_feed(url) (shared)
+│   └── verify_join.py       Phase 2 trip_id→route join coverage diagnostic
+├── frontend/
+│   ├── index.html          markup only; loads /styles/app.css + <script type=module>
+│   ├── styles/app.css      all CSS
+│   ├── scripts/            ES modules (see "Frontend modules" below)
+│   └── static/             bus.png (nose EAST, +90°), train.png (SE, +135°), bus-stop.png (pin)
+├── docs/                   code-reference.html + presentation.html (learning material)
+├── requirements.txt, CLAUDE.md, README.md, .gitignore
 ```
 
 The exploration scripts (`explore_feed`, `build_map`, `verify_join`) are
-**standalone throwaway tools** — do not import them into production code
-beyond the current `server.py → build_map` imports that already exist.
+**standalone tools** — don't import them into production beyond the existing
+`server.py → build_map`/`explore_feed` imports.
+
+### Frontend modules (`frontend/scripts/`, true ES modules)
+`config` (constants/ICONS) · `state` (shared singletons: `veh`, `vehByTrip`,
+`stopMarkers`, `shapesById`, and the `app` object for reassignable fields — the
+encapsulated replacement for globals) · `format` (esc, ETA/Late phrasing) ·
+`geometry` (bearing + turf projection/along/slice helpers) · `icons` (divIcons) ·
+`map` (Leaflet map, layers, cluster, zoom readout) · `network` (loadNetwork + stop
+ETA popup) · `vehicles` (refresh + the rAF animation/snapping engine + vehicle-click) ·
+`tracking` (track/untrack, bubble, blue route, preview) · `geolocation` · `main`
+(wires everything, exposes popup-button handlers on `window`). The `vehicles↔tracking`
+import cycle is intentional and safe (cross-calls only happen inside functions).
+CDN libs (`L`, markercluster, `turf`) load as classic `<script>` and are used as globals.
 
 ---
 
@@ -60,18 +78,19 @@ Calgary Open Data          (GTFS-RT protobuf, ~30s publish cadence)
   │                       polls BOTH feeds: vehicle positions + trip updates (each dedupes)
   ├── SNAPSHOT global     latest resolved vehicle list, replaced atomically
   ├── TRIP_UPDATES global stop_id → [(arrival_epoch, trip_id, vehicle_id)] index
-  ├── GET /api/network    shapes + stops (static, fetched once by frontend)
+  ├── TRIP_UPDATES global stop_id→arrivals  +  by_trip: trip_id→[(arrival,stop_id)]
+  ├── GET /api/network    shapes (+shape_id) + stops (static, fetched once)
   ├── GET /api/vehicles   cached snapshot, instant (no network call)
-  ├── GET /api/stop/{id}/eta   next 3 arrivals at a stop (soonest first), trip→route joined
-  ├── GET /static/*       bus.png, train.png, bus-stop.png
-  └── GET /               index.html
-        │
+  ├── GET /api/stop/{id}/eta       next 3 arrivals at a stop, trip→route joined
+  ├── GET /api/trip/{id}/next-stop soonest upcoming stop for a trip (vehicle-click)
+  └── mount("/", frontend) index.html at /, plus /styles /scripts /static
+        │                  (a no-store middleware keeps dev assets fresh)
         ▼  fetch every 15s
-  Leaflet frontend
-  ├── loadNetwork()       draws route polylines once; all stops → marker-cluster group
-  ├── requestAnimationFrame loop   60fps lerp animation + follow-cam for tracked bus
-  ├── stop click          → /api/stop/{id}/eta popup; "track" follows a live bus
-  └── refresh() / setInterval     updates glide targets, computes bearing, sets icon rotation
+  ES-module frontend (frontend/scripts/*)
+  ├── loadNetwork()       polylines once; stops → marker-cluster; cache turf line/shape
+  ├── requestAnimationFrame loop   60fps glide ALONG the shape (snap) + follow-cam
+  ├── stop/vehicle click  → ETA popup; "track" follows a live bus (blue route + bubble)
+  └── refresh() / setInterval     new fixes → re-project onto shape, recompute bearing
 ```
 
 **Why a backend at all:** clients should never hit Calgary's feed directly.
@@ -138,13 +157,22 @@ low latency; the server dedupes so no wasted work.
 
 ## Frontend animation engine
 
+Lives in `frontend/scripts/vehicles.js` (`refresh` + `animate` + `setTarget`) with
+geometry in `geometry.js`. **Snap-to-shape (Phase 6):** instead of a straight lerp
+between two 30s-apart GPS fixes (which cuts across blocks — "flying"), each fix is
+projected onto the vehicle's GTFS route polyline (`turf.nearestPointOnLine`), and the
+marker interpolates **along the line** (`turf.along`) so it rides the road. The GTFS
+`shapes.txt` already traces the road — no OSM map-matching. A vehicle whose fix is
+>`OFFROAD_M` (50 m) off its shape falls back to straight-line lerp; so do unmatched
+vehicles (no `shape_id`). Per-vehicle `mode` is `'shape'` or `'line'`.
+
 **Why interpolation, not extrapolation:** Calgary gives no speed/bearing,
 so extrapolation would require deriving velocity from two fixes and predicting
 ahead — overshoot artifacts + correction jitter with 30s-gap updates. We
 interpolate (animate toward latest known position) and accept a small constant
 lag in exchange for stable, artifact-free motion.
 
-**Interpolation pattern (in index.html):**
+**Interpolation pattern (straight-line / `line` mode fallback):**
 ```
 per-vehicle state: { fromLat, fromLon, toLat, toLon, bearing, forward,
                      startT, dur, settled, lastMove }
@@ -164,7 +192,8 @@ img.style.transform = `rotate(${cssRotation}deg)`
 ```
 The `forward` values are the compass direction each icon's nose points in its
 natural (unrotated) state. If icons are replaced, update these two constants in
-the `ICONS` table in index.html — nothing else changes.
+the `ICONS` table in `config.js` — nothing else changes. (In `shape` mode the
+bearing comes from two points along the polyline; in `line` mode from the two fixes.)
 
 **"Everything freezes" — root causes:**
 1. **Normal data gap:** between Calgary's ~30s publishes all positions are
@@ -206,6 +235,9 @@ into themed red counted badges; zooming in splits them into individual
 | 4 | Rotating PNG icons + lerp animation + freeze mitigation | `index.html` |
 | 5 | Trip Updates poll + stop-click ETA popup (next 3 arrivals) + per-bus tracking (follow-cam, flash, countdown bubble) | `server.py`, `build_map.py`, `index.html` |
 | 5.1 | Stop marker-clustering (replaced zoom-gate) + selected-stop highlight + pause/resume-follow + snap-back-to-stop + geolocation locate control | `index.html` |
+| 5.2–5.3 | Tunable cluster zoom + `#zoomcap` readout; declutter on track; distance-gated due/depart; blue tracked-route; route-number labels; "ETA:/Late:" labels + red Late + anchored timer | `index.html` |
+| 6 | **Snap-to-shape animation** (ride the road via `shape_id` + Turf.js) + blue bus→stop route that trims on the render loop; `/api/trip/{id}/next-stop` (vehicle-click → next stop + Track); `Cache-Control: no-store` | `build_map.py`, `server.py`, `index.html` |
+| 7.0 | Restructure → `backend/` + `frontend/` (HTML/CSS/ES-module split); server serves the frontend folder; `docs/` learning material | all |
 
 Phase 5 implementation notes:
 - **"Nearest vehicle" = soonest predicted arrival**, NOT geographically closest
@@ -218,17 +250,7 @@ Phase 5 implementation notes:
 
 ## Next phases (planned)
 
-### Phase 6 — Snap-to-route interpolation (Tier 2 animation)
-Instead of straight-line lerp, animate vehicles *along their route polyline*.
-This requires:
-- Backend: include `shape_id` in `/api/vehicles` response (already available
-  from the join in `build_vehicles()`).
-- Backend or frontend: send shape geometry per vehicle (or preload all shapes
-  and look up client-side — shape data already in `/api/network`).
-- Frontend: linear referencing — project old/new positions onto the polyline,
-  interpolate progress along the line. Leaflet alone can't do this cleanly;
-  consider Turf.js (`nearestPointOnLine`, `along`) for the geometry math.
-  This is the "impressive GIS" piece: real linear referencing in the browser.
+> Phase 6 (snap-to-route) is **done** — see the animation-engine section above.
 
 ### Phase 7 — React + MapLibre frontend
 Swap the Leaflet page for a proper React app with MapLibre GL JS.
@@ -260,20 +282,28 @@ line, once the app is stable.
   Import this into server.py for the startup join; do not duplicate.
 - `build_vehicles(feed, routes, trips)` — in `build_map.py`. Returns
   `(vehicles_list, matched_count)` where each vehicle is:
-  `[lat, lon, route_short, color, headsign, vehicle_id, route_type_str, trip_id]`
+  `[lat, lon, route_short, color, headsign, vehicle_id, route_type_str, trip_id, shape_id]`
+- `build_shapes(zf, routes, shape_route)` — in `build_map.py`. Each shape is
+  `{shape_id, coords, color}` (shape_id added in Phase 6 for the frontend lookup).
 - `build_stops(zf)` — in `build_map.py`. Returns `[lat, lon, name, stop_id]` rows.
-- `build_trip_index(feed)` — in `server.py`. Trip Updates feed →
-  `{stop_id: [(arrival_epoch, trip_id, vehicle_id)]}`; guards every optional with
-  `HasField`, prefers `arrival.time` over `departure.time`.
+- `build_trip_index(feed)` — in `server.py`. Returns **two** indexes:
+  `index = {stop_id: [(arrival, trip_id, vehicle_id)]}` and
+  `by_trip = {trip_id: [(arrival, stop_id)]}` (the latter powers `/api/trip/{id}/next-stop`).
+  Guards every optional with `HasField`; prefers `arrival.time` over `departure.time`.
 
 ---
 
 ## Known issues / do-not-touch
 
-- **Do not change the vehicle array format** `[lat,lon,short,color,head,id,type,trip_id]`
-  without updating both `build_map.py` (build_vehicles) and `index.html` (the
-  destructuring `const [lat,lon,short,color,head,id,type,tripId] = arr`). They must
-  stay in sync. Likewise the stops array `[lat,lon,name,stop_id]`.
+- **Do not change the vehicle array format** `[lat,lon,short,color,head,id,type,trip_id,shape_id]`
+  without updating both `build_map.py` (build_vehicles) and `frontend/scripts/vehicles.js`
+  (the destructure `const [lat,lon,short,color,head,id,type,tripId,shapeId] = arr`).
+  They must stay in sync. Likewise the stops array `[lat,lon,name,stop_id]` and shapes
+  `{shape_id,coords,color}`.
+- **Frontend is ES modules** (`frontend/scripts/`). Shared mutable state lives in
+  `state.js` (`app.*` + the `veh`/`stopMarkers`/… collections), NOT window globals —
+  the only `window.*` are the four popup-button handlers wired in `main.js`. The
+  `vehicles↔tracking` import cycle is intentional (function-level use only).
 - **Stops use the marker-cluster plugin, not raw markers.** See the Stops layer
   section — don't swap clustering for per-stop DOM markers (perf cliff).
 - **Do not add CORS restrictions yet** — the `allow_origins=["*"]` in

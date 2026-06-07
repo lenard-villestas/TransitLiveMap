@@ -17,7 +17,6 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from google.protobuf.message import DecodeError
 
@@ -143,10 +142,17 @@ app = FastAPI(lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"],
                    allow_methods=["*"], allow_headers=["*"])
 
-# Serve icon images (bus.png, train.png, ...) from ./static
-STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
-os.makedirs(STATIC_DIR, exist_ok=True)
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+# The frontend lives in ../frontend (index.html + styles/ + scripts/ + static/).
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+FRONTEND_DIR = os.path.join(ROOT, "frontend")
+
+
+@app.middleware("http")
+async def no_store(request, call_next):
+    """Dev convenience: never cache, so edits to html/css/js/icons always reload."""
+    resp = await call_next(request)
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 
 @app.get("/api/network")
@@ -220,12 +226,7 @@ def trip_next_stop(trip_id: str):
     }
 
 
-@app.get("/")
-def index():
-    """Serve the frontend page from the same origin as the API.
-
-    no-store so local edits (constants, tuning) always take effect on reload —
-    the browser otherwise caches index.html and runs a stale copy.
-    """
-    return FileResponse(os.path.join(os.path.dirname(__file__), "index.html"),
-                        headers={"Cache-Control": "no-store"})
+# Serve the whole frontend folder (index.html at /, plus /styles, /scripts, /static).
+# Mounted LAST so the /api/* routes above take precedence; html=True serves index.html
+# for "/". no-store comes from the middleware above.
+app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")

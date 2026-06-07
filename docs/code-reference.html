@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Calgary Transit Tracker — Code Reference</title>
+  <style>
+    :root {
+      --bg: #0f172a; --panel: #1e293b; --ink: #e2e8f0; --muted: #94a3b8;
+      --line: #334155; --accent: #38bdf8; --accent2: #f59e0b; --green: #34d399; --red: #f87171;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; background: var(--bg); color: var(--ink);
+      font: 15px/1.6 system-ui, sans-serif; display: grid;
+      grid-template-columns: 260px 1fr;
+    }
+    nav {
+      position: sticky; top: 0; align-self: start; height: 100vh; overflow: auto;
+      border-right: 1px solid var(--line); padding: 20px 16px; background: #0b1220;
+    }
+    nav h1 { font-size: 15px; margin: 0 0 4px; color: var(--accent); }
+    nav .sub { color: var(--muted); font-size: 12px; margin-bottom: 16px; }
+    nav a { display: block; color: var(--ink); text-decoration: none; padding: 3px 8px;
+      border-radius: 6px; font-size: 13.5px; }
+    nav a:hover { background: var(--panel); }
+    nav a.head { color: var(--muted); font-size: 11px; text-transform: uppercase;
+      letter-spacing: .06em; margin-top: 14px; padding-left: 8px; }
+    main { padding: 32px 40px 120px; max-width: 980px; }
+    h2 { color: var(--accent); border-bottom: 1px solid var(--line); padding-bottom: 6px;
+      margin-top: 48px; }
+    h3 { color: var(--accent2); margin-top: 30px; }
+    code { background: #0b1220; padding: 1px 5px; border-radius: 4px; font-size: 13px;
+      color: #fdba74; }
+    pre { background: #0b1220; border: 1px solid var(--line); border-radius: 8px;
+      padding: 14px 16px; overflow: auto; font-size: 13px; }
+    pre code { background: none; padding: 0; color: #cbd5e1; }
+    table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 13.5px; }
+    th, td { border: 1px solid var(--line); padding: 7px 10px; text-align: left; vertical-align: top; }
+    th { background: var(--panel); color: var(--accent); }
+    .pill { display: inline-block; background: var(--panel); border: 1px solid var(--line);
+      border-radius: 20px; padding: 1px 10px; font-size: 12px; color: var(--muted); }
+    .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+      padding: 4px 18px 14px; margin: 14px 0; }
+    .yes { color: var(--green); } .no { color: var(--red); }
+    .lede { color: var(--muted); font-size: 16px; }
+    a.api { color: var(--accent); }
+    .mod { font-weight: 700; color: var(--accent); }
+  </style>
+</head>
+
+<body>
+  <nav>
+    <h1>Code Reference</h1>
+    <div class="sub">Calgary Transit Live Tracker</div>
+    <a class="head">Overview</a>
+    <a href="#layout">Project layout</a>
+    <a href="#flow">End-to-end data flow</a>
+    <a class="head">Backend</a>
+    <a href="#server">server.py</a>
+    <a href="#endpoints">HTTP endpoints</a>
+    <a href="#buildmap">build_map.py</a>
+    <a href="#explore">explore_feed / verify_join</a>
+    <a href="#contracts">Data contracts</a>
+    <a href="#feed">Calgary feed quirks</a>
+    <a class="head">Frontend (ES modules)</a>
+    <a href="#fe-overview">Module graph</a>
+    <a href="#m-config">config / state / format</a>
+    <a href="#m-geometry">geometry / icons</a>
+    <a href="#m-map">map / network</a>
+    <a href="#m-vehicles">vehicles</a>
+    <a href="#m-tracking">tracking</a>
+    <a href="#m-geo">geolocation / main</a>
+  </nav>
+
+  <main>
+    <h2 id="layout">Project layout</h2>
+    <p class="lede">A FastAPI backend (the "kitchen") decodes Calgary's GTFS-realtime
+      feeds, joins them to the static schedule, caches the result, and serves clean JSON
+      + the static frontend. The frontend is vanilla ES modules over Leaflet.</p>
+    <pre><code>backend/
+  server.py        FastAPI app, 15s poll loop, /api/* endpoints, serves ../frontend
+  build_map.py     static-GTFS loaders + build_vehicles / build_stops / build_shapes
+  explore_feed.py  Phase-0 feed explorer; fetch_feed(url) is shared
+  verify_join.py   trip_id → route join coverage diagnostic
+frontend/
+  index.html       markup only; loads /styles/app.css + &lt;script type="module"&gt;
+  styles/app.css   all styling
+  scripts/*.js     ES modules (config, state, format, geometry, icons, map,
+                   network, vehicles, tracking, geolocation, main)
+  static/          bus.png, train.png, bus-stop.png
+docs/              this reference + presentation.html</code></pre>
+
+    <h2 id="flow">End-to-end data flow</h2>
+    <ol>
+      <li><b>Startup:</b> <code>load_network()</code> downloads the static GTFS zip once,
+        builds in-memory lookups (routes, trips, shapes, stops).</li>
+      <li><b>Background thread:</b> <code>poll_loop()</code> fetches the <b>vehicle
+        positions</b> and <b>trip updates</b> feeds every 15 s, dedupes on the feed's
+        header timestamp, resolves <code>trip_id → route/shape</code>, and atomically
+        replaces the cached <code>SNAPSHOT</code> + <code>TRIP_UPDATES</code> indexes.</li>
+      <li><b>Frontend:</b> fetches <code>/api/network</code> once (shapes + stops), then
+        polls <code>/api/vehicles</code> every 15 s. A 60 fps <code>requestAnimationFrame</code>
+        loop interpolates each vehicle <i>along its route shape</i> between fixes.</li>
+      <li><b>Interaction:</b> clicking a stop or vehicle calls <code>/api/stop/{id}/eta</code>
+        or <code>/api/trip/{id}/next-stop</code>; "Track" starts the follow-cam + ETA bubble.</li>
+    </ol>
+
+    <h2 id="server">Backend — server.py</h2>
+    <div class="card">
+      <h3>Why a backend at all</h3>
+      <p>Clients never hit Calgary's feed directly. The backend decodes protobuf
+        (<code>gtfs-realtime-bindings</code>), does the static join, dedupes, caches, and
+        serves clean JSON. Without it every client would hammer Calgary and you couldn't
+        do the join or spatial work.</p>
+      <h3>Why a thread, not async</h3>
+      <p><code>requests.get()</code> blocks. Running it on the FastAPI event loop would
+        freeze every HTTP response during a poll, so the poller runs on a daemon thread.</p>
+    </div>
+    <p><b>Key globals:</b> <code>NETWORK</code> (shapes+stops), <code>SNAPSHOT</code>
+      (latest vehicles), <code>TRIP_UPDATES</code> (<code>{index, by_trip, ts}</code>),
+      <code>LOOKUPS</code> (routes+trips). A <code>@app.middleware("http")</code> sets
+      <code>Cache-Control: no-store</code> so dev edits always reload. The frontend is
+      served by one catch-all <code>StaticFiles</code> mount at <code>/</code> (after the
+      <code>/api/*</code> routes, which keep priority).</p>
+    <p><code>build_trip_index(feed)</code> turns the trip-updates feed into two indexes:
+      <code>index = {stop_id: [(arrival, trip_id, vehicle_id)]}</code> (stop ETA) and
+      <code>by_trip = {trip_id: [(arrival, stop_id)]}</code> (a trip's upcoming stops).
+      Every optional protobuf field is guarded with <code>HasField()</code>.</p>
+
+    <h2 id="endpoints">HTTP endpoints</h2>
+    <table>
+      <tr><th>Method / path</th><th>Returns</th></tr>
+      <tr><td><span class="api">GET /api/network</span></td>
+        <td><code>{shapes:[{shape_id,coords,color}], stops:[[lat,lon,name,stop_id]]}</code> — static, fetched once.</td></tr>
+      <tr><td><span class="api">GET /api/vehicles</span></td>
+        <td><code>{vehicles:[…], ts, matched, age}</code>; each vehicle is the array contract below. Cached — no network call.</td></tr>
+      <tr><td><span class="api">GET /api/stop/{stop_id}/eta</span></td>
+        <td><code>{stop_id, arrivals:[{route,headsign,color,type,trip_id,vehicle_id,arrival,eta_seconds}], ts}</code> — soonest 3, past filtered.</td></tr>
+      <tr><td><span class="api">GET /api/trip/{trip_id}/next-stop</span></td>
+        <td><code>{stop_id, arrival, eta_seconds, route, headsign, ts}</code> or <code>{stop_id:null}</code> — soonest upcoming stop for a trip.</td></tr>
+      <tr><td><span class="api">GET / · /styles/* · /scripts/* · /static/*</span></td>
+        <td>The <code>frontend/</code> folder (static mount, <code>html=True</code>).</td></tr>
+    </table>
+
+    <h2 id="buildmap">build_map.py</h2>
+    <table>
+      <tr><th>Function</th><th>Returns / role</th></tr>
+      <tr><td><code>get_gtfs_zip()</code></td><td>Download (or open a local) static GTFS zip, trying Socrata mime variants.</td></tr>
+      <tr><td><code>load_lookups(zf)</code></td><td><code>(routes, trips, shape_route)</code> — id → info dicts; <code>trips[id]</code> has <code>route_id, shape_id, headsign</code>.</td></tr>
+      <tr><td><code>build_shapes(zf, routes, shape_route)</code></td><td><code>[{shape_id, coords:[[lat,lon]], color}]</code> — route polylines (the road geometry).</td></tr>
+      <tr><td><code>build_stops(zf)</code></td><td><code>[[lat, lon, name, stop_id]]</code>.</td></tr>
+      <tr><td><code>build_vehicles(feed, routes, trips)</code></td><td><code>(vehicles, matched)</code> — resolves each live <code>trip_id</code> to route + shape (see contract).</td></tr>
+    </table>
+
+    <h2 id="explore">explore_feed.py / verify_join.py</h2>
+    <p><code>fetch_feed(url)</code> (in <code>explore_feed.py</code>) GETs protobuf bytes
+      and parses them into a <code>FeedMessage</code> — shared by the server for both
+      feeds. The rest of <code>explore_feed</code> is a CLI inspector (<code>--watch</code>,
+      <code>--vehicle</code>, schema dump). <code>verify_join.py</code> measures what
+      fraction of live <code>trip_id</code>s resolve in the static schedule (~97.4%).</p>
+
+    <h2 id="contracts">Data contracts (keep backend + frontend in sync)</h2>
+    <div class="card">
+      <p><b>Vehicle array</b> (build_vehicles ↔ vehicles.js destructure):</p>
+      <pre><code>[lat, lon, route_short, color, headsign, vehicle_id, route_type, trip_id, shape_id]</code></pre>
+      <p><b>Stop array:</b> <code>[lat, lon, name, stop_id]</code> &nbsp;·&nbsp;
+        <b>Shape:</b> <code>{shape_id, coords, color}</code></p>
+      <p><code>trip_id</code> links a vehicle to a trip-updates arrival; <code>shape_id</code>
+        links it to its road polyline (for snapping + the blue tracked route).</p>
+    </div>
+
+    <h2 id="feed">Calgary GTFS-RT quirks (discovered empirically)</h2>
+    <table>
+      <tr><th>Field</th><th>Populated?</th><th>Consequence</th></tr>
+      <tr><td><code>trip.trip_id</code></td><td class="yes">✅ 100%</td><td>The only reliable vehicle→route link.</td></tr>
+      <tr><td><code>trip.route_id</code> (positions)</td><td class="no">❌ 0%</td><td>Join via <code>trip_id</code> instead.</td></tr>
+      <tr><td><code>position.bearing / speed</code></td><td class="no">❌ 0%</td><td>Compute bearing from positions; no dead-reckoning.</td></tr>
+      <tr><td><code>stop_time_update.stop_id</code></td><td class="yes">✅ 100%</td><td>Matches static stops.txt — clean ETA join.</td></tr>
+      <tr><td><code>trip_update.vehicle.id</code></td><td class="no">❌ empty</td><td>Link arrivals to live buses by <code>trip_id</code>, not vehicle id.</td></tr>
+    </table>
+    <p>Route types in Calgary: only <code>0</code> (CTrain/LRT) and <code>3</code> (bus,
+      incl. MAX BRT). Publish cadence ≈ 30 s; we poll at 15 s and dedupe on the header
+      timestamp so faster polling is free.</p>
+
+    <h2 id="fe-overview">Frontend — module graph</h2>
+    <p>CDN libraries (<code>L</code> Leaflet, <code>markercluster</code>, <code>turf</code>)
+      load as classic scripts and are used as globals. App code is ES modules:</p>
+    <pre><code>main ─┬─ map ──────────── (creates the Leaflet map, layers, cluster)
+      ├─ network ──────── map, state, icons, format
+      ├─ vehicles ⇄ tracking   (intentional cycle; function-level only)
+      │     └─ config, state, geometry, icons, format
+      ├─ tracking ─────── config, map, state, geometry, icons, format, vehicles
+      └─ geolocation ──── map, config, state
+state.js  →  shared singletons (veh, vehByTrip, stopMarkers, shapesById, app{…})</code></pre>
+
+    <h2 id="m-config"><span class="mod">config.js</span> / <span class="mod">state.js</span> / <span class="mod">format.js</span></h2>
+    <ul>
+      <li><b>config</b> — constants: <code>API, REFRESH_MS, DUE_M=50, DEPART_M=20,
+        OFFROAD_M=50, DISABLE_CLUSTER_ZOOM=16, RETURN_ZOOM=16</code> + <code>ICONS</code>.</li>
+      <li><b>state</b> — the encapsulated stand-in for globals: collections
+        <code>veh, vehByTrip, stopMarkers, shapesById</code> and the <code>app</code>
+        object holding reassignable fields (<code>tracked, etaTimer, lastPan, routeLine,
+        preview*, …</code>). Other modules mutate <code>app.x</code>.</li>
+      <li><b>format</b> — <code>esc</code> (HTML-escape), <code>etaPhrase</code> (ETA:/Late:),
+        <code>etaParts</code> (adds a "due" window for stop-popup rows).</li>
+    </ul>
+
+    <h2 id="m-geometry"><span class="mod">geometry.js</span> / <span class="mod">icons.js</span></h2>
+    <ul>
+      <li><b>geometry</b> — <code>bearingDeg</code>, plus Turf wrappers
+        <code>projectOnLine</code> (nearest point on a shape → distance-along + offset),
+        <code>pointAt</code> (point at a distance along), <code>shapeBearing</code>,
+        <code>lerp</code>. Turf uses <code>[lng,lat]</code>; the app uses <code>[lat,lon]</code>
+        — converted at the boundary.</li>
+      <li><b>icons</b> — <code>kindFor(type)</code>, <code>makeIcon(kind, short)</code>
+        (vehicle divIcon + route label), <code>stopDiv(selected)</code> (stop pin).</li>
+    </ul>
+
+    <h2 id="m-map"><span class="mod">map.js</span> / <span class="mod">network.js</span></h2>
+    <ul>
+      <li><b>map</b> — builds the Leaflet map, CARTO basemap, <code>shapeLayer</code>,
+        the <code>stopCluster</code> (markercluster with themed badges,
+        <code>disableClusteringAtZoom</code>), the layer control, and
+        <code>updateZoomCap()</code> (zoom readout + reveals route labels at zoom ≥ 16).</li>
+      <li><b>network</b> — <code>loadNetwork()</code> draws the polylines, caches a Turf
+        line per <code>shape_id</code>, and adds each stop to the cluster with a
+        <b>bind-once</b> popup that fetches ETA on <code>popupopen</code> (binding inside
+        a click handler double-wires Leaflet's toggle and breaks reopening).
+        <code>renderEtaPopup()</code> builds the rows; its Track button calls
+        <code>window.trackIdx(i)</code>.</li>
+    </ul>
+
+    <h2 id="m-vehicles"><span class="mod">vehicles.js</span> — the animation engine</h2>
+    <ul>
+      <li><b>refresh()</b> — fetch <code>/api/vehicles</code>; create/update a marker per
+        vehicle; rebuild <code>vehByTrip</code>; remove vehicles that left the feed.</li>
+      <li><b>setTarget()</b> — on a new fix, project both the current and new positions
+        onto the vehicle's shape. If within <code>OFFROAD_M</code> → <code>mode:'shape'</code>
+        (store along-line distances); else <code>mode:'line'</code> (straight lerp).</li>
+      <li><b>animate()</b> — 60 fps loop: in shape mode, <code>lerp</code> the along-line
+        distance and place the marker with <code>pointAt</code>; runs the follow-cam and
+        trims the blue route (throttled).</li>
+      <li><b>openVehicleNext()</b> — click a bus → fetch its next stop, preview-highlight
+        the bus + stop, open a popup with a Track button.</li>
+    </ul>
+
+    <h2 id="m-tracking"><span class="mod">tracking.js</span></h2>
+    <ul>
+      <li><b>track / untrack</b> — start/stop tracking: declutter stops, glow the bus +
+        its stop, bind the ETA tooltip, follow-cam, draw the blue route; untrack restores
+        everything and (optionally) flies back to the stop.</li>
+      <li><b>trackedBubble()</b> — computes the status: <code>due</code> when within the
+        along-route window, <code>departed</code> once past it, else <code>ETA:</code> /
+        <code>Late:</code> against the <i>anchored</i> arrival epoch (captured at track
+        start, never re-based by later predictions).</li>
+      <li><b>drawTrackedRoute()</b> — <code>turf.lineSliceAlong</code> from the bus's
+        current along-distance to the stop, updated in place each frame.</li>
+      <li><b>updateBubble / updateTrackBar</b> — the floating bubble + bottom bar
+        (stop name on top, labeled timer below, red when late).</li>
+    </ul>
+
+    <h2 id="m-geo"><span class="mod">geolocation.js</span> / <span class="mod">main.js</span></h2>
+    <ul>
+      <li><b>geolocation</b> — a "📍 locate me" Leaflet control + a "you are here" dot;
+        <code>startLocate()</code> centres the map on the user at zoom 16 on load.</li>
+      <li><b>main</b> — the entry point: exposes the four popup-button handlers on
+        <code>window</code>, wires map events, starts the rAF loop, loads the network,
+        and begins the 15 s poll.</li>
+    </ul>
+  </main>
+</body>
+
+</html>

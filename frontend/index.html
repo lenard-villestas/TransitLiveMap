@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="utf-8">
+  <title>Calgary Transit — live</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  <!-- Map + plugin libraries (expose globals L, turf that the ES modules use) -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+  <script src="https://unpkg.com/@turf/turf@7/turf.min.js"></script>
+
+  <link rel="stylesheet" href="/styles/app.css" />
+</head>
+
+<body>
+  <div id="map"></div>
+  <div id="cap">loading…</div>
+  <div id="zoomcap"></div>
+  <div id="trackbar"><span id="trackinfo"></span><button id="followbtn" onclick="resumeFollow()"
+      style="display:none">follow</button><button onclick="stopTracking()">stop</button></div>
+
+  <!-- App code as ES modules (entry point: scripts/main.js) -->
+  <script type="module" src="/scripts/main.js"></script>
+</body>
+
+</html>

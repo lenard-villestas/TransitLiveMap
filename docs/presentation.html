@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>How the Calgary Transit Tracker Works — a walkthrough</title>
+  <style>
+    :root {
+      --bg: #0b1020; --ink: #e8edf7; --muted: #9fb0c8; --card: #161d33;
+      --line: #2a3450; --accent: #38bdf8; --amber: #f59e0b; --green: #34d399;
+      --red: #f87171; --blue: #3b82f6;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--ink);
+      font: 17px/1.65 system-ui, sans-serif; }
+    header.hero {
+      padding: 80px 24px 56px; text-align: center;
+      background: radial-gradient(1200px 400px at 50% -10%, #1b2747, transparent);
+      border-bottom: 1px solid var(--line);
+    }
+    header.hero h1 { font-size: 40px; margin: 0 0 10px; }
+    header.hero p { color: var(--muted); max-width: 640px; margin: 0 auto; font-size: 19px; }
+    .tag { display: inline-block; margin: 18px 6px 0; padding: 5px 12px; border: 1px solid var(--line);
+      border-radius: 20px; font-size: 13px; color: var(--muted); background: var(--card); }
+    section { max-width: 880px; margin: 0 auto; padding: 56px 24px; border-bottom: 1px solid var(--line); }
+    .step { color: var(--accent); font-size: 13px; letter-spacing: .12em; text-transform: uppercase; }
+    h2 { font-size: 30px; margin: 6px 0 14px; }
+    h3 { color: var(--amber); margin-top: 26px; }
+    p.lede { font-size: 19px; color: var(--muted); }
+    .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+      padding: 8px 22px 18px; margin: 20px 0; }
+    .why { border-left: 3px solid var(--amber); padding: 4px 16px; margin: 18px 0; color: var(--ink);
+      background: #1a2138; border-radius: 0 8px 8px 0; }
+    .why b { color: var(--amber); }
+    code { background: #0b1020; padding: 1px 6px; border-radius: 4px; color: #fdba74; font-size: 14px; }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .stack { display: flex; flex-wrap: wrap; gap: 10px; }
+    .chip { background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+      padding: 10px 14px; font-size: 14px; }
+    .chip b { color: var(--accent); }
+    svg { width: 100%; height: auto; display: block; }
+    .cap { color: var(--muted); font-size: 14px; text-align: center; margin-top: 8px; }
+    .legend { display: flex; gap: 18px; justify-content: center; flex-wrap: wrap; font-size: 13px;
+      color: var(--muted); margin-top: 8px; }
+    .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; vertical-align: middle; margin-right: 5px; }
+    footer { text-align: center; color: var(--muted); padding: 40px; font-size: 14px; }
+    @media (max-width: 680px) { .grid2 { grid-template-columns: 1fr; } header.hero h1 { font-size: 30px; } }
+  </style>
+</head>
+
+<body>
+  <header class="hero">
+    <h1>🚌 How the Live Transit Tracker Works</h1>
+    <p>A student's walkthrough of the stack, the architecture, the data, and the GIS
+      techniques that make buses glide smoothly along real roads in real time.</p>
+    <div>
+      <span class="tag">Python · FastAPI</span>
+      <span class="tag">Leaflet</span>
+      <span class="tag">Turf.js</span>
+      <span class="tag">GTFS / GTFS-Realtime</span>
+      <span class="tag">vanilla ES modules</span>
+    </div>
+  </header>
+
+  <!-- 1. THE BIG PICTURE -->
+  <section>
+    <div class="step">01 · The big picture</div>
+    <h2>One backend, many browsers</h2>
+    <p class="lede">The golden rule: <b>browsers never talk to Calgary directly.</b> One
+      backend does the expensive work once, then hands cheap cached JSON to everyone.</p>
+
+    <svg viewBox="0 0 820 300" role="img" aria-label="Architecture diagram">
+      <defs>
+        <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+          <path d="M0,0 L8,3 L0,6 Z" fill="#9fb0c8" />
+        </marker>
+      </defs>
+      <!-- Calgary -->
+      <rect x="20" y="110" width="170" height="80" rx="12" fill="#161d33" stroke="#2a3450" />
+      <text x="105" y="140" fill="#e8edf7" font-size="15" text-anchor="middle" font-weight="bold">Calgary Open Data</text>
+      <text x="105" y="162" fill="#9fb0c8" font-size="12" text-anchor="middle">GTFS-RT protobuf</text>
+      <text x="105" y="178" fill="#9fb0c8" font-size="12" text-anchor="middle">~30 s cadence</text>
+      <!-- Backend -->
+      <rect x="320" y="80" width="190" height="140" rx="12" fill="#15233f" stroke="#38bdf8" />
+      <text x="415" y="108" fill="#38bdf8" font-size="15" text-anchor="middle" font-weight="bold">FastAPI backend</text>
+      <text x="415" y="132" fill="#cbd5e1" font-size="12" text-anchor="middle">poll every 15 s · dedupe</text>
+      <text x="415" y="150" fill="#cbd5e1" font-size="12" text-anchor="middle">join trip_id → route/shape</text>
+      <text x="415" y="168" fill="#cbd5e1" font-size="12" text-anchor="middle">cache SNAPSHOT</text>
+      <text x="415" y="186" fill="#cbd5e1" font-size="12" text-anchor="middle">serve clean JSON</text>
+      <text x="415" y="206" fill="#9fb0c8" font-size="11" text-anchor="middle">("the kitchen")</text>
+      <!-- Browsers -->
+      <rect x="640" y="60" width="160" height="50" rx="10" fill="#161d33" stroke="#2a3450" />
+      <text x="720" y="90" fill="#e8edf7" font-size="13" text-anchor="middle">browser</text>
+      <rect x="640" y="125" width="160" height="50" rx="10" fill="#161d33" stroke="#2a3450" />
+      <text x="720" y="155" fill="#e8edf7" font-size="13" text-anchor="middle">browser</text>
+      <rect x="640" y="190" width="160" height="50" rx="10" fill="#161d33" stroke="#2a3450" />
+      <text x="720" y="220" fill="#e8edf7" font-size="13" text-anchor="middle">browser</text>
+      <!-- arrows -->
+      <line x1="192" y1="150" x2="316" y2="150" stroke="#9fb0c8" stroke-width="2" marker-end="url(#arrow)" />
+      <line x1="512" y1="135" x2="636" y2="85" stroke="#9fb0c8" stroke-width="2" marker-end="url(#arrow)" />
+      <line x1="512" y1="150" x2="636" y2="150" stroke="#9fb0c8" stroke-width="2" marker-end="url(#arrow)" />
+      <line x1="512" y1="165" x2="636" y2="215" stroke="#9fb0c8" stroke-width="2" marker-end="url(#arrow)" />
+    </svg>
+    <p class="cap">Calgary → one backend → many browsers. The backend is the only thing that fetches.</p>
+
+    <div class="why"><b>Why?</b> Decoding protobuf, joining the schedule, and de-duplicating
+      can't happen in the browser. And if 100 people opened the map, you'd hit Calgary 100×.
+      Do it once, cache it, serve JSON.</div>
+  </section>
+
+  <!-- 2. THE STACK -->
+  <section>
+    <div class="step">02 · The stack</div>
+    <h2>What each piece is for</h2>
+    <div class="stack">
+      <div class="chip"><b>FastAPI</b> — tiny Python web framework; serves the JSON API + the frontend files.</div>
+      <div class="chip"><b>requests</b> — downloads the feeds (on a background thread).</div>
+      <div class="chip"><b>gtfs-realtime-bindings</b> — decodes Google's protobuf feed format.</div>
+      <div class="chip"><b>Leaflet</b> — the slippy map (tiles, markers, popups).</div>
+      <div class="chip"><b>Leaflet.markercluster</b> — groups ~6000 stops into counted badges.</div>
+      <div class="chip"><b>Turf.js</b> — the GIS math: project a point onto a line, walk along it.</div>
+      <div class="chip"><b>ES modules</b> — the frontend split into small files with import/export.</div>
+    </div>
+    <h3>Two kinds of transit data</h3>
+    <div class="grid2">
+      <div class="card"><h3 style="margin-top:8px">Static GTFS</h3>
+        <p>A zip of CSVs: routes, trips, <b>stops</b>, and <b>shapes</b> (the exact path
+          each route drives). Downloaded once at startup. Rarely changes.</p></div>
+      <div class="card"><h3 style="margin-top:8px">GTFS-Realtime</h3>
+        <p>Live protobuf feeds, refreshed ~every 30 s: <b>vehicle positions</b> (where
+          each bus is) and <b>trip updates</b> (predicted arrival times per stop).</p></div>
+    </div>
+  </section>
+
+  <!-- 3. THE JOIN -->
+  <section>
+    <div class="step">03 · The crucial join</div>
+    <h2>A live bus knows almost nothing about itself</h2>
+    <p class="lede">Calgary's live feed gives a position and a <code>trip_id</code> — but
+      <b>no route name, no color, no shape</b>. We recover all of that from the static
+      schedule using <code>trip_id</code> as the key.</p>
+
+    <svg viewBox="0 0 820 220" role="img" aria-label="trip_id join">
+      <rect x="20" y="40" width="220" height="140" rx="12" fill="#161d33" stroke="#2a3450" />
+      <text x="130" y="66" fill="#38bdf8" font-size="14" text-anchor="middle" font-weight="bold">live vehicle</text>
+      <text x="130" y="92" fill="#cbd5e1" font-size="13" text-anchor="middle">lat, lon</text>
+      <text x="130" y="114" fill="#fdba74" font-size="13" text-anchor="middle">trip_id = 73229497</text>
+      <text x="130" y="136" fill="#f87171" font-size="12" text-anchor="middle">route_id? ✗ empty</text>
+      <text x="130" y="156" fill="#f87171" font-size="12" text-anchor="middle">bearing/speed? ✗ empty</text>
+
+      <line x1="244" y1="110" x2="336" y2="110" stroke="#9fb0c8" stroke-width="2" marker-end="url(#arrow)" />
+      <text x="290" y="100" fill="#9fb0c8" font-size="12" text-anchor="middle">trip_id</text>
+
+      <rect x="340" y="40" width="220" height="140" rx="12" fill="#161d33" stroke="#2a3450" />
+      <text x="450" y="66" fill="#38bdf8" font-size="14" text-anchor="middle" font-weight="bold">static trips.txt</text>
+      <text x="450" y="92" fill="#cbd5e1" font-size="13" text-anchor="middle">trip_id → route_id</text>
+      <text x="450" y="114" fill="#cbd5e1" font-size="13" text-anchor="middle">trip_id → shape_id</text>
+      <text x="450" y="136" fill="#cbd5e1" font-size="13" text-anchor="middle">trip_id → headsign</text>
+
+      <line x1="564" y1="110" x2="636" y2="110" stroke="#9fb0c8" stroke-width="2" marker-end="url(#arrow)" />
+
+      <rect x="640" y="40" width="160" height="140" rx="12" fill="#15233f" stroke="#34d399" />
+      <text x="720" y="66" fill="#34d399" font-size="14" text-anchor="middle" font-weight="bold">resolved</text>
+      <text x="720" y="92" fill="#cbd5e1" font-size="13" text-anchor="middle">Route 2</text>
+      <text x="720" y="114" fill="#cbd5e1" font-size="13" text-anchor="middle">color + shape</text>
+      <text x="720" y="136" fill="#cbd5e1" font-size="13" text-anchor="middle">"to Killarney"</text>
+    </svg>
+    <div class="why"><b>Empirical finding:</b> ~97.4% of live <code>trip_id</code>s resolve in
+      the static schedule. The rest are added/unscheduled trips — handled gracefully as
+      "unmatched", not treated as bugs.</div>
+  </section>
+
+  <!-- 4. INTERPOLATION -->
+  <section>
+    <div class="step">04 · Smooth motion</div>
+    <h2>The bus only "blinks" every 30 seconds</h2>
+    <p class="lede">A new position arrives only ~every 30 s. If we teleported the marker
+      it would jump. So we animate <i>toward</i> the latest known spot at 60 fps.</p>
+    <h3>Interpolate, don't extrapolate</h3>
+    <div class="grid2">
+      <div class="card"><h3 style="margin-top:8px; color:var(--green)">Interpolation ✓</h3>
+        <p>Glide from where the marker is to the newest fix. A small, constant lag — but
+          stable and artifact-free.</p></div>
+      <div class="card"><h3 style="margin-top:8px; color:var(--red)">Extrapolation ✗</h3>
+        <p>Guess ahead using velocity. With no speed/bearing in the feed and 30 s gaps,
+          you get overshoot and correction "jitter."</p></div>
+    </div>
+    <div class="why"><b>Self-tuning glide:</b> the animation duration is
+      <code>clamp(timeSinceLastMove, 12 s, 40 s)</code>, so the motion stretches to span
+      the real gap instead of finishing early and freezing.</div>
+  </section>
+
+  <!-- 5. SNAP TO SHAPE -->
+  <section>
+    <div class="step">05 · The impressive GIS bit</div>
+    <h2>Make buses follow the road, not cut across blocks</h2>
+    <p class="lede">A straight line between two fixes cuts corners — buses look like they're
+      flying. We <b>snap</b> each fix onto the route's shape and move <i>along the line</i>.</p>
+
+    <svg viewBox="0 0 820 240" role="img" aria-label="snap to shape">
+      <!-- road shape -->
+      <path d="M60,180 C200,180 220,60 360,60 L560,60 C700,60 720,180 780,180"
+            fill="none" stroke="#3b82f6" stroke-width="6" opacity="0.5" />
+      <!-- straight (bad) -->
+      <line x1="120" y1="180" x2="660" y2="120" stroke="#f87171" stroke-width="2" stroke-dasharray="6 5" />
+      <circle cx="120" cy="180" r="7" fill="#f87171" />
+      <circle cx="660" cy="120" r="7" fill="#f87171" />
+      <text x="380" y="150" fill="#f87171" font-size="13" text-anchor="middle">straight lerp → cuts across ✗</text>
+      <!-- snapped (good) -->
+      <circle cx="120" cy="180" r="5" fill="#34d399" />
+      <circle cx="360" cy="60" r="9" fill="#fff" stroke="#1f2937" stroke-width="2" />
+      <text x="430" y="40" fill="#34d399" font-size="13" text-anchor="middle">snapped: glides along the shape ✓</text>
+      <text x="700" y="205" fill="#9fb0c8" font-size="12" text-anchor="middle">GTFS shape = the road path</text>
+    </svg>
+    <div class="legend">
+      <span><span class="dot" style="background:#3b82f6"></span>route shape (from GTFS)</span>
+      <span><span class="dot" style="background:#f87171"></span>naive straight line</span>
+      <span><span class="dot" style="background:#34d399"></span>snapped motion</span>
+    </div>
+
+    <h3>How it works (linear referencing)</h3>
+    <ol>
+      <li><b>Project</b> the old and new positions onto the shape →
+        <code>turf.nearestPointOnLine</code> gives "distance along the line."</li>
+      <li><b>Interpolate</b> that distance each frame and read back the point with
+        <code>turf.along</code>. The marker rides the curve.</li>
+      <li><b>Fallback:</b> if a fix is &gt; 50 m off its shape (detour, bad data, no shape),
+        revert to the straight-line glide so nothing breaks.</li>
+    </ol>
+    <div class="why"><b>Where do the road shapes come from?</b> They're already in the
+      static GTFS (<code>shapes.txt</code>) — one polyline per route, tracing the actual
+      streets. No external map-matching or OpenStreetMap needed.</div>
+  </section>
+
+  <!-- 6. CLUSTERING -->
+  <section>
+    <div class="step">06 · Performance</div>
+    <h2>~6000 stops without melting the browser</h2>
+    <p class="lede">Putting 6000 image markers in the DOM at once is a known performance
+      cliff. <b>Clustering</b> keeps the live marker count near what's on screen.</p>
+    <svg viewBox="0 0 820 150" role="img" aria-label="clustering">
+      <circle cx="150" cy="75" r="34" fill="rgba(220,38,38,.85)" stroke="#fff" stroke-width="2" />
+      <text x="150" y="81" fill="#fff" font-size="18" text-anchor="middle" font-weight="bold">137</text>
+      <text x="150" y="135" fill="#9fb0c8" font-size="13" text-anchor="middle">zoomed out: counted badge</text>
+      <line x1="300" y1="75" x2="380" y2="75" stroke="#9fb0c8" stroke-width="2" marker-end="url(#arrow)" />
+      <text x="340" y="64" fill="#9fb0c8" font-size="12" text-anchor="middle">zoom in</text>
+      <g fill="#dc2626">
+        <circle cx="460" cy="55" r="6"/><circle cx="500" cy="85" r="6"/><circle cx="540" cy="50" r="6"/>
+        <circle cx="585" cy="90" r="6"/><circle cx="620" cy="60" r="6"/><circle cx="660" cy="95" r="6"/>
+        <circle cx="700" cy="55" r="6"/>
+      </g>
+      <text x="580" y="135" fill="#9fb0c8" font-size="13" text-anchor="middle">zoomed in: individual pins</text>
+    </svg>
+    <div class="why"><b>Same idea, two costs avoided:</b> fewer DOM nodes (speed) and less
+      visual clutter (clarity). Below zoom 16 stops cluster; at/above 16 they split apart.</div>
+  </section>
+
+  <!-- 7. TRACKING -->
+  <section>
+    <div class="step">07 · The signature feature</div>
+    <h2>Tracking a bus to your stop</h2>
+    <p class="lede">Click a stop (or a bus) → pick an arrival → <b>Track</b>. The camera
+      follows the bus, it flashes blue, a blue line shows its path to your stop, and a
+      bubble counts down.</p>
+    <div class="card">
+      <h3 style="margin-top:8px">The ETA → due → Late → departed lifecycle</h3>
+      <ul>
+        <li><b>ETA / Late</b> — measured against the predicted time captured <i>when you
+          started tracking</i> (anchored — it won't silently re-base). Past it → red
+          <b>Late:</b> counting up.</li>
+        <li><b>due</b> — based on real <i>distance along the route</i> to the stop (not the
+          drifty clock), so it triggers when the bus is genuinely close.</li>
+        <li><b>departed</b> — once the bus is measurably past the stop → tracking ends and
+          the camera flies back.</li>
+      </ul>
+    </div>
+    <div class="why"><b>Why distance, not just the clock?</b> Predictions drift and the bus
+      snaps to the road centre-line (offset from the curb). Measuring distance <i>along the
+      shape</i> reaches ~0 exactly at the stop, so "due" is honest.</div>
+  </section>
+
+  <!-- 8. FRONTEND STRUCTURE -->
+  <section>
+    <div class="step">08 · How the code is organised</div>
+    <h2>Small modules, one job each</h2>
+    <p class="lede">The frontend is plain ES modules — no build step. Shared state lives in
+      one <code>state.js</code> instead of scattered globals.</p>
+    <div class="stack">
+      <div class="chip"><b>config</b> tunable numbers</div>
+      <div class="chip"><b>state</b> shared data</div>
+      <div class="chip"><b>format</b> text helpers</div>
+      <div class="chip"><b>geometry</b> the Turf math</div>
+      <div class="chip"><b>icons</b> map markers</div>
+      <div class="chip"><b>map</b> Leaflet setup</div>
+      <div class="chip"><b>network</b> load stops/shapes</div>
+      <div class="chip"><b>vehicles</b> animation engine</div>
+      <div class="chip"><b>tracking</b> follow + ETA</div>
+      <div class="chip"><b>geolocation</b> locate me</div>
+      <div class="chip"><b>main</b> wires it together</div>
+    </div>
+    <p style="margin-top:18px">Want the exact functions, endpoints, and data shapes? See the
+      companion <code>code-reference.html</code>.</p>
+  </section>
+
+  <!-- 9. WHAT'S NEXT -->
+  <section style="border-bottom:none">
+    <div class="step">09 · Where it could go</div>
+    <h2>Next steps</h2>
+    <div class="grid2">
+      <div class="card"><h3 style="margin-top:8px">MapLibre GL</h3>
+        <p>Swap Leaflet for GPU vector rendering — smoother camera, nicer route lines. The
+          JSON API stays identical, so only the renderer changes.</p></div>
+      <div class="card"><h3 style="margin-top:8px">Docker + cloud</h3>
+        <p>Containerise the backend + frontend, add PostGIS for history/spatial queries,
+          deploy to Fly.io / Render.</p></div>
+    </div>
+  </section>
+
+  <footer>
+    Built as a GIS learning project · Calgary Transit Live Tracker ·
+    data © Calgary Open Data, map © OpenStreetMap &amp; CARTO
+  </footer>
+</body>
+
+</html>
