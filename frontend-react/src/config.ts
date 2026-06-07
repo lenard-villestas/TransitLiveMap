@@ -9,21 +9,26 @@ export const LABEL_ZOOM = 16;              // route-number labels appear at/abov
 export const DUE_M = 50;                    // tracked bus within this many m (along route) → "due"
 export const DEPART_M = 20;                 // ...and "departed" once it's this far PAST the stop
 export const OFFROAD_M = 50;                // GPS fix farther than this from its shape → straight-lerp fallback
+export const MAX_SPEED_MPS = 30;            // ~108 km/h: cap on plausible along-route travel between fixes
+export const JUMP_SLACK_M = 250;            // extra slack added to the constrained-projection search window
 export const RETURN_ZOOM = 16;              // zoom used when snapping back to a stop / locating the user
 
 // Each icon image has a "forward" direction baked in; to point it along travel
 // bearing B (0=N, clockwise) we rotate by (B - forward). MapLibre's icon-rotate
 // is also clockwise-from-north, so the same math the Leaflet CSS used applies.
+// `image` is the MapLibre image id the vehicles layer requests. The bus id is
+// 'bus-default' (NOT 'bus') so it can't collide with the basemap sprite's own
+// 'bus' glyph — see ICON_FILES + the registration in MapView.
 export const ICONS: Record<string, { image: string; forward: number }> = {
-  bus:   { image: 'bus',   forward: 90 },   // head points east
-  train: { image: 'train', forward: 135 },  // head points south-east
+  bus:   { image: 'bus-default', forward: 90 },   // head points east
+  train: { image: 'train',       forward: 135 },  // head points south-east
 };
 
-// Images registered into the MapLibre style on load (name → URL under /static).
+// Images registered into the MapLibre style on load (image id → URL under /static).
 export const ICON_FILES: Record<string, string> = {
-  bus:   '/static/bus.png',
-  train: '/static/train.png',
-  stop:  '/static/bus-stop.png',
+  'bus-default': '/static/bus-default.png',
+  train:         '/static/train.png',
+  stop:          '/static/bus-stop.png',
 };
 
 // MapTiler vector basemap if a key is provided (VITE_MAPTILER_KEY in .env),

@@ -8,9 +8,10 @@ import * as turf from '@turf/turf';
 import type { Feature, FeatureCollection, LineString, Point } from 'geojson';
 import { API } from '../config';
 import type { NetworkResponse } from '../types';
-import type { TurfLine } from './geometry';
+import { lineLengthKm, type TurfLine } from './geometry';
 
 export const shapesById = new Map<string, TurfLine>();
+export const shapeLenById = new Map<string, number>();   // shape_id → length (km), computed once
 export const stopById = new Map<string, { lng: number; lat: number; name: string }>();
 
 export interface NetworkGeo {
@@ -30,8 +31,13 @@ export async function loadNetwork(): Promise<NetworkGeo> {
       properties: { color: s.color || '#888888' },
       geometry: { type: 'LineString', coordinates: lngLat },
     });
-    // cache a turf line ([lng,lat]) per shape_id for snap-to-shape + route slicing
-    if (s.shape_id) shapesById.set(s.shape_id, turf.lineString(lngLat));
+    // cache a turf line ([lng,lat]) per shape_id for snap-to-shape + route slicing,
+    // plus its length once (the constrained projection needs it on the hot path)
+    if (s.shape_id) {
+      const tl = turf.lineString(lngLat);
+      shapesById.set(s.shape_id, tl);
+      shapeLenById.set(s.shape_id, lineLengthKm(tl));
+    }
   });
 
   const stopFeatures: Feature<Point>[] = net.stops.map(([lat, lon, name, sid]) => {

@@ -28,6 +28,28 @@ export function pointAt(line: TurfLine, distKm: number) {
   return { lat: c[1], lon: c[0] };
 }
 
+export function lineLengthKm(line: TurfLine): number {
+  return turf.length(line, { units: 'kilometers' });
+}
+
+// Project [lat,lon] onto only the window of `line` within ±windowKm of `nearKm`
+// (the vehicle's current along-distance). This defeats the linear-referencing
+// ambiguity on self-overlapping shapes: the *near* pass is the only candidate, so
+// the projection can't flip to a far-away segment that shares the same ground.
+// nearKm == null (no prior position) → fall back to a whole-line projection.
+export function projectNear(
+  line: TurfLine, lat: number, lon: number,
+  nearKm: number | null, windowKm: number, lenKm: number,
+): { dist: number; offM: number } {
+  if (nearKm == null || windowKm >= lenKm) return projectOnLine(line, lat, lon);
+  const startKm = Math.max(0, nearKm - windowKm);
+  const endKm = Math.min(lenKm, nearKm + windowKm);
+  if (endKm - startKm < 1e-4) return projectOnLine(line, lat, lon);
+  const slice = turf.lineSliceAlong(line, startKm, endKm, { units: 'kilometers' }) as TurfLine;
+  const local = projectOnLine(slice, lat, lon);
+  return { dist: startKm + local.dist, offM: local.offM };
+}
+
 export function shapeBearing(line: TurfLine, fromDist: number, toDist: number): number {
   const a = pointAt(line, fromDist);
   const b = (Math.abs(toDist - fromDist) < 1e-4)

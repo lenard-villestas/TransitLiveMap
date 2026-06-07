@@ -86,7 +86,7 @@ export function MapView() {
         })
         .catch(() => {});
     };
-    ['bus', 'train', 'stop', 'bus-flip', 'train-flip'].forEach(ensureIcon);
+    ['bus-default', 'train', 'stop', 'bus-default-flip', 'train-flip'].forEach(ensureIcon);
     map.on('styleimagemissing', (ev) => ensureIcon((ev as { id: string }).id));
     engine.attach(map);
     setReady(true);
@@ -125,7 +125,7 @@ export function MapView() {
       onLoad={onLoad}
       onClick={onClickMap}
       onZoom={(e: ViewStateChangeEvent) => useStore.getState().set({ zoom: Math.round(e.target.getZoom()) })}
-      onDragStart={() => engine.pauseFollow()}
+      onMoveStart={(e: ViewStateChangeEvent) => { if (e.originalEvent) engine.pauseFollow(); }}
       interactiveLayerIds={['vehicles', 'stops', 'clusters']}
     >
       <GeolocateControl

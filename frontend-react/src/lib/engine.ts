@@ -10,12 +10,12 @@ import * as turf from '@turf/turf';
 import type { GeoJSONSource, Map as MlMap } from 'maplibre-gl';
 import type { Feature, FeatureCollection, LineString, Point } from 'geojson';
 import {
-  REFRESH_MS, ICONS, OFFROAD_M, DUE_M, DEPART_M, RETURN_ZOOM, API,
+  REFRESH_MS, ICONS, OFFROAD_M, MAX_SPEED_MPS, JUMP_SLACK_M, DUE_M, DEPART_M, RETURN_ZOOM, API,
 } from '../config';
 import type { VehiclesResponse, EtaArrival, StopEtaResponse, NextStopResponse } from '../types';
-import { shapesById, stopById } from './network';
+import { shapesById, shapeLenById, stopById } from './network';
 import {
-  lerp, bearingDeg, projectOnLine, pointAt, shapeBearing, distM, type TurfLine,
+  lerp, bearingDeg, projectOnLine, projectNear, lineLengthKm, pointAt, shapeBearing, distM, type TurfLine,
 } from './geometry';
 import { etaPhrase } from './format';
 import { useStore } from '../store';
@@ -90,16 +90,22 @@ class Engine {
       const kind = kindFor(type);
       const v = this.veh.get(id);
       if (!v) {
+        // seed the along-distance once so the very first constrained projection
+        // has a continuity anchor (avoids a possible first-fix flip).
+        const line0 = shapeId ? shapesById.get(shapeId) ?? null : null;
+        const curDist0 = line0 ? projectOnLine(line0, lat, lon).dist : null;
         this.veh.set(id, {
           id, short, type, head, kind, forward: ICONS[kind].forward,
           shapeId: shapeId || null, tripId: tripId || null,
           lng: lon, lat, mode: 'line', line: null,
-          fromDist: 0, toDist: 0, curDist: null,
+          fromDist: 0, toDist: 0, curDist: curDist0,
           fromLat: lat, fromLon: lon, toLat: lat, toLon: lon, toLatRaw: lat, toLonRaw: lon,
           bearing: ICONS[kind].forward, startT: now, dur: REFRESH_MS, lastMove: 0, settled: true,
         });
       } else {
-        if (shapeId) v.shapeId = shapeId;
+        // trip turnover → new shape: drop the stale along-distance so setTarget
+        // re-seeds on the new line instead of carrying it across shapes.
+        if (shapeId && shapeId !== v.shapeId) { v.shapeId = shapeId; v.curDist = null; }
         if (tripId) v.tripId = tripId;
         if (lat !== v.toLatRaw || lon !== v.toLonRaw) this.setTarget(v, lat, lon, now);
       }
@@ -126,12 +132,18 @@ class Engine {
     const line = v.shapeId ? shapesById.get(v.shapeId) ?? null : null;
     let snapped = false;
     if (line) {
-      const to = projectOnLine(line, lat, lon);
+      // continuity anchor: where the vehicle already is along the line.
+      const prevDist = v.curDist != null ? v.curDist : projectOnLine(line, v.lat, v.lng).dist;
+      // search only the reachable stretch (±max plausible travel) around prevDist, so
+      // the projection can't flip to a far overlapping segment of the same shape.
+      const dtSec = v.lastMove ? (now - v.lastMove) / 1000 : REFRESH_MS / 1000;
+      const windowKm = (MAX_SPEED_MPS * dtSec + JUMP_SLACK_M) / 1000;
+      const lenKm = shapeLenById.get(v.shapeId!) ?? lineLengthKm(line);
+      const to = projectNear(line, lat, lon, prevDist, windowKm, lenKm);
       if (to.offM <= OFFROAD_M) {
-        const from = projectOnLine(line, v.lat, v.lng);
         v.mode = 'shape'; v.line = line;
-        v.fromDist = from.dist; v.toDist = to.dist; v.curDist = from.dist;
-        v.bearing = shapeBearing(line, from.dist, to.dist);
+        v.fromDist = prevDist; v.toDist = to.dist; v.curDist = prevDist;
+        v.bearing = shapeBearing(line, prevDist, to.dist);
         snapped = true;
       }
     }
@@ -193,7 +205,9 @@ class Engine {
       if (t && v.id !== t.id) continue;             // hide other buses while tracking
       // side-view icon: pick the mirrored variant when travelling west (bearing
       // 180–360) so the bus faces its direction of travel but stays upright.
-      const img = v.kind + (v.bearing > 180 ? '-flip' : '');
+      // ICONS[kind].image is the registered image id (namespaced to dodge the
+      // basemap sprite's own 'bus' glyph).
+      const img = ICONS[v.kind].image + (v.bearing > 180 ? '-flip' : '');
       feats.push({
         type: 'Feature',
         properties: { id: v.id, short: v.short, img },
@@ -349,6 +363,14 @@ class Engine {
     this.previewArrival = { trip_id: v.tripId, arrival: data.arrival!, route: data.route! };
     this.previewStopId = data.stop_id!;
     this.setSelStop(stop);
+    // frame the camera so BOTH the bus and its next stop are visible (extra top
+    // padding leaves room for the popup, which anchors above the stop).
+    const sw: [number, number] = [Math.min(v.lng, stop.lng), Math.min(v.lat, stop.lat)];
+    const ne: [number, number] = [Math.max(v.lng, stop.lng), Math.max(v.lat, stop.lat)];
+    this.map?.fitBounds([sw, ne], {
+      padding: { top: 130, bottom: 60, left: 60, right: 60 },
+      maxZoom: 16, duration: 600,
+    });
     this.store().set({
       popup: {
         kind: 'vehicle', lng: stop.lng, lat: stop.lat,
