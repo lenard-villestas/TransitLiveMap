@@ -22,11 +22,19 @@ import { useStore } from '../store';
 
 const kindFor = (type: string) => (/tram|lrt|rail|subway/i.test(type) ? 'train' : 'bus');
 
+// stable per-vehicle sample rank in [0,1): same id always maps to the same value,
+// so the zoomed-out "overview" sample doesn't flicker frame to frame.
+const rankOf = (id: string) => {
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = (Math.imul(h, 31) + id.charCodeAt(i)) | 0;
+  return ((h >>> 0) % 1000) / 1000;
+};
+
 const EMPTY: FeatureCollection = { type: 'FeatureCollection', features: [] };
 
 interface VehState {
   id: string; short: string; type: string; head: string;
-  kind: string; forward: number;
+  kind: string; forward: number; rank: number;
   shapeId: string | null; tripId: string | null;
   lng: number; lat: number;                 // current displayed position
   mode: 'shape' | 'line';
@@ -95,7 +103,7 @@ class Engine {
         const line0 = shapeId ? shapesById.get(shapeId) ?? null : null;
         const curDist0 = line0 ? projectOnLine(line0, lat, lon).dist : null;
         this.veh.set(id, {
-          id, short, type, head, kind, forward: ICONS[kind].forward,
+          id, short, type, head, kind, forward: ICONS[kind].forward, rank: rankOf(id),
           shapeId: shapeId || null, tripId: tripId || null,
           lng: lon, lat, mode: 'line', line: null,
           fromDist: 0, toDist: 0, curDist: curDist0,
@@ -208,9 +216,11 @@ class Engine {
       // ICONS[kind].image is the registered image id (namespaced to dodge the
       // basemap sprite's own 'bus' glyph).
       const img = ICONS[v.kind].image + (v.bearing > 180 ? '-flip' : '');
+      // tracked bus → rank 0 so it's always in the overview sample (never vanishes zoomed out)
+      const rank = t && v.id === t.id ? 0 : v.rank;
       feats.push({
         type: 'Feature',
-        properties: { id: v.id, short: v.short, img },
+        properties: { id: v.id, short: v.short, img, rank },
         geometry: { type: 'Point', coordinates: [v.lng, v.lat] },
       });
     }

@@ -9,11 +9,11 @@ import Map, {
   Source, Layer, Popup, GeolocateControl, NavigationControl,
   type MapEvent, type MapLayerMouseEvent, type ViewStateChangeEvent,
 } from 'react-map-gl/maplibre';
-import type { Map as MlMap, GeoJSONSource, GeolocateControl as GeolocateControlInstance } from 'maplibre-gl';
+import type { Map as MlMap, GeolocateControl as GeolocateControlInstance } from 'maplibre-gl';
 import type { FeatureCollection } from 'geojson';
 import 'maplibre-gl/dist/maplibre-gl.css';
 
-import { MAP_STYLE, CALGARY_VIEW, ICON_FILES, REFRESH_MS, API, CLUSTER_MAX_ZOOM } from '../config';
+import { MAP_STYLE, CALGARY_VIEW, ICON_FILES, REFRESH_MS, API } from '../config';
 import { engine } from '../lib/engine';
 import { loadNetwork, type NetworkGeo } from '../lib/network';
 import { useStore } from '../store';
@@ -94,24 +94,16 @@ export function MapView() {
     setTimeout(() => geoRef.current?.trigger(), 400);
   };
 
-  const onClickMap = async (e: MapLayerMouseEvent) => {
+  const onClickMap = (e: MapLayerMouseEvent) => {
     const f = e.features && e.features[0];
     if (!f) return;
-    const map = e.target as MlMap;
     const id = f.layer.id;
-    if (id === 'vehicles') {
+    if (id === 'vehicles' || id === 'vehicles-overview') {
       engine.openVehicleNext(String((f.properties as Record<string, unknown>).id));
     } else if (id === 'stops') {
       const [lng, lat] = (f.geometry as GeoJSON.Point).coordinates;
       const props = f.properties as Record<string, string>;
       useStore.getState().set({ popup: { kind: 'stop', lng, lat, stopId: props.stop_id, name: props.name } });
-    } else if (id === 'clusters') {
-      const src = map.getSource('stops') as GeoJSONSource;
-      const clusterId = (f.properties as Record<string, number>).cluster_id;
-      try {
-        const zoom = await src.getClusterExpansionZoom(clusterId);
-        map.easeTo({ center: (f.geometry as GeoJSON.Point).coordinates as [number, number], zoom });
-      } catch { /* ignore */ }
     }
   };
 
@@ -125,8 +117,10 @@ export function MapView() {
       onLoad={onLoad}
       onClick={onClickMap}
       onZoom={(e: ViewStateChangeEvent) => useStore.getState().set({ zoom: Math.round(e.target.getZoom()) })}
-      onMoveStart={(e: ViewStateChangeEvent) => { if (e.originalEvent) engine.pauseFollow(); }}
-      interactiveLayerIds={['vehicles', 'stops', 'clusters']}
+      onMouseDown={() => engine.pauseFollow()}
+      onTouchStart={() => engine.pauseFollow()}
+      onWheel={() => engine.pauseFollow()}
+      interactiveLayerIds={['vehicles', 'vehicles-overview', 'stops']}
     >
       <GeolocateControl
         ref={geoRef}
@@ -139,14 +133,7 @@ export function MapView() {
       <NavigationControl position="top-right" showCompass={false} />
 
       {net && (
-        <Source id="shapes" type="geojson" data={net.shapesFC}>
-          <Layer {...layers.shapeLineLayer} />
-        </Source>
-      )}
-      {net && (
-        <Source id="stops" type="geojson" data={net.stopsFC} cluster clusterMaxZoom={CLUSTER_MAX_ZOOM} clusterRadius={60}>
-          <Layer {...layers.clusterCircleLayer} />
-          <Layer {...layers.clusterCountLayer} />
+        <Source id="stops" type="geojson" data={net.stopsFC}>
           <Layer {...layers.stopLayer} />
         </Source>
       )}
@@ -162,6 +149,7 @@ export function MapView() {
         <Layer {...layers.vehHaloLayer} />
       </Source>
       <Source id="vehicles" type="geojson" data={EMPTY}>
+        <Layer {...layers.vehicleOverviewLayer} />
         <Layer {...layers.vehicleLayer} />
         <Layer {...layers.vehicleLabelLayer} />
       </Source>

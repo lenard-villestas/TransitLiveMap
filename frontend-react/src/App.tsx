@@ -4,7 +4,6 @@
 import { MapView } from './map/MapView';
 import { TrackBar } from './ui/TrackBar';
 import { useStore } from './store';
-import { LABEL_ZOOM } from './config';
 
 export default function App() {
   const caption = useStore((s) => s.caption);
@@ -13,7 +12,7 @@ export default function App() {
     <>
       <MapView />
       <div id="cap">{caption}</div>
-      <div id="zoomcap">zoom {zoom} · cluster &lt; {LABEL_ZOOM}</div>
+      <div id="zoomcap">zoom {zoom}</div>
       <TrackBar />
     </>
   );

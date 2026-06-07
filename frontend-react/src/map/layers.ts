@@ -2,7 +2,7 @@
 // of the old imperative Leaflet rendering with declarative, data-driven styling.
 
 import type { LayerProps } from 'react-map-gl/maplibre';
-import { LABEL_ZOOM } from '../config';
+import { LABEL_ZOOM, STOP_MINZOOM, VEH_OVERVIEW_FRACTION, VEH_ALL_ZOOM } from '../config';
 
 // route polylines — colour comes from each feature's `color` property
 export const shapeLineLayer = {
@@ -40,11 +40,11 @@ export const clusterCountLayer = {
   paint: { 'text-color': '#fff' },
 } as LayerProps;
 
-// individual stop pins (only when not clustered)
+// stop pins, only once zoomed in (clean "Uber" look — no city-wide blanket of pins)
 export const stopLayer = {
   id: 'stops',
   type: 'symbol',
-  filter: ['!', ['has', 'point_count']],
+  minzoom: STOP_MINZOOM,
   layout: {
     'icon-image': 'stop',
     'icon-size': 0.9,
@@ -98,9 +98,28 @@ export const vehHaloLayer = {
 // the vehicles themselves: side-view art, so we DON'T rotate (that tips the wheels
 // over). The `img` property is the icon name already chosen by travel direction —
 // e.g. 'bus' (faces east) or 'bus-flip' (mirrored, faces west) — kept upright.
+//
+// Density-by-zoom: each vehicle carries a stable `rank` ∈ [0,1). The OVERVIEW layer
+// always draws the low-rank sample (an activity overview when zoomed out); the FULL
+// layer draws the rest only once zoomed past VEH_ALL_ZOOM. Disjoint filters → at high
+// zoom both together = every vehicle, with no duplicates.
+export const vehicleOverviewLayer = {
+  id: 'vehicles-overview',
+  type: 'symbol',
+  filter: ['<', ['get', 'rank'], VEH_OVERVIEW_FRACTION],
+  layout: {
+    'icon-image': ['get', 'img'],
+    'icon-size': 0.8,
+    'icon-allow-overlap': true,
+    'icon-ignore-placement': true,
+  },
+} as LayerProps;
+
 export const vehicleLayer = {
   id: 'vehicles',
   type: 'symbol',
+  minzoom: VEH_ALL_ZOOM,
+  filter: ['>=', ['get', 'rank'], VEH_OVERVIEW_FRACTION],
   layout: {
     'icon-image': ['get', 'img'],
     'icon-size': 0.8,
