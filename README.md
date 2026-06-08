@@ -2,12 +2,14 @@
 
 A live web map that tracks Calgary Transit buses and CTrains in real time — built as
 a GIS portfolio project with a **Python/FastAPI** backend. Vehicles snap to and glide
-along their route shapes, stops cluster and show live ETAs, and you can track any bus to
-its next stop with a follow-cam and a live ETA/Late countdown.
+along their route shapes (rotating to their travel bearing), stops and ETAs appear as you
+zoom in, and you can track any bus to its next stop with a follow-cam and a live ETA/Late
+countdown.
 
 There are **two interchangeable frontends** on the same backend JSON API:
-- **`frontend-react/`** — the current **React + TypeScript + MapLibre GL** app (vector
-  basemap, GPU layers).
+- **`frontend-react/`** — the current **React + TypeScript + MapLibre GL** app: a clean,
+  light Positron-style vector basemap with GPU layers, decluttered for an "Uber day" look
+  (stops at zoom ≥ 14, vehicles density-gated by zoom).
 - **`frontend/`** — the original **Leaflet + vanilla ES modules** app (kept as a fallback).
 
 ## Quick start

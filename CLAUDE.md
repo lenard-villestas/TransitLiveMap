@@ -9,20 +9,25 @@ anything so you don't undo a considered choice.
 
 ## Current state
 
-Phases 0–7 are complete and working. The app shows the live fleet with rotating
-bus/train icons that **snap to and glide along the route polyline**; clustered stops
-with live ETA popups; per-bus tracking (follow-cam + glow + anchored ETA/Late bubble +
-blue bus→stop route line); click-a-vehicle → its next stop + Track; route-number labels
-at zoom ≥ 16; and a geolocation "locate me" control.
+Phases 0–7 are complete and working. The app shows the live fleet with **top-down
+bus/train icons that rotate to their travel bearing** and **snap to / glide along the
+route polyline**; stops with live ETA popups; per-bus tracking (follow-cam + glow +
+anchored ETA/Late bubble + blue bus→stop route line); click-a-vehicle → its next stop +
+Track; route-number labels at zoom ≥ 16; and a geolocation "locate me" control.
 
 **There are now TWO frontends, same backend JSON contract:**
 - **`frontend/`** — the original **Leaflet + vanilla ES-module** app (Phase 7.0). Still
-  works; kept as the fallback during the migration.
+  works; kept as the fallback during the migration. (Uses the older side-view CSS-rotated
+  icons + marker-cluster stops — the React app's icon/stop model below has since diverged.)
 - **`frontend-react/`** — the new **React + TypeScript + MapLibre GL** app (Phase 7).
-  Vector basemap (MapTiler key, or keyless OpenFreeMap fallback), GPU symbol layers
-  (vehicles/stops as GeoJSON sources — no marker-cluster plugin, native clustering +
-  declutter), the snap-to-shape rAF engine ported into `lib/engine.ts`, and the chrome
-  (caption, track bar, popups, bubble) as React components driven by a zustand store.
+  Clean light **Positron-style** vector basemap (MapTiler `dataviz` with a key, or the
+  keyless OpenFreeMap `positron` fallback), GPU symbol layers (vehicles/stops as GeoJSON
+  sources — no marker-cluster plugin), the snap-to-shape rAF engine ported into
+  `lib/engine.ts`, and the chrome (track bar, popups, bubble, zoom readout, collapsible
+  attribution) as React components driven by a zustand store. The map is decluttered for
+  an "Uber day" look: **stops only at zoom ≥ 14** (no clustering), **vehicles density-gated
+  by zoom** (a stable low-rank sample when zoomed out, every vehicle past z13), and
+  route-number labels at zoom ≥ 16.
 
 **Run it (from repo root):**
 ```bash
@@ -65,12 +70,12 @@ TransitLiveMap/
 │   └── static/             bus.png (nose EAST, +90°), train.png (SE, +135°), bus-stop.png (pin)
 ├── frontend-react/         NEW React + TS + MapLibre app (Phase 7)
 │   ├── index.html, vite.config.ts (dev proxy /api→:8000), .env (VITE_MAPTILER_KEY)
-│   ├── public/static/      the same three PNGs (registered as MapLibre images)
+│   ├── public/static/      bus_topdown.png (nose NORTH), train.png, bus-stop.png (registered as MapLibre images)
 │   └── src/
 │       ├── config.ts types.ts store.ts (zustand)   main.tsx App.tsx
 │       ├── lib/    geometry.ts format.ts network.ts engine.ts (rAF snap-to-shape + tracking)
 │       ├── map/    MapView.tsx (the <Map> + sources/layers + popups) · layers.ts
-│       └── ui/     EtaRow · StopPopup · VehiclePopup · TrackBar
+│       └── ui/     EtaRow · StopPopup · VehiclePopup · TrackBar · TrackBubble
 ├── docs/                   code-reference.html + presentation.html (learning material)
 ├── requirements.txt, CLAUDE.md, README.md, .gitignore
 ```
@@ -100,18 +105,34 @@ the **`vehicles`** map source via `setData` (plus `tracked-route`, `selstop`, `v
 **Never route the rAF loop through React state.** The reactive *chrome* lives in
 **`store.ts`** (zustand: `caption`, `zoom`, `tracked`, `bubble`, `trackedPos`, `popup`),
 updated at 1–5 Hz, and is rendered by small components (`TrackBar`, `EtaRow`, `StopPopup`,
-`VehiclePopup`, plus the bubble/popups inside `MapView`). `lib/network.ts` loads
-`/api/network` → GeoJSON + the `shapesById`/`stopById` lookups the engine needs.
-`map/layers.ts` holds the data-driven layer styles (native GeoJSON clustering, label
-`minzoom` declutter). The popup Track buttons call `engine.*` **directly** — no
-`window.*` handlers, no HTML strings.
+`VehiclePopup`, plus the bubble/popups inside `MapView`). The tracked-bus ETA bubble is
+isolated in its own **`TrackBubble`** component so the per-frame `trackedPos` updates only
+re-render it, not the whole chrome. `lib/network.ts` loads `/api/network` → GeoJSON + the
+`shapesById`/`stopById` lookups the engine needs. `map/layers.ts` holds the data-driven
+layer styles (stop `minzoom` declutter, the two zoom-gated vehicle layers, label
+`minzoom`). The popup Track buttons call `engine.*` **directly** — no `window.*` handlers,
+no HTML strings.
 
-**Vehicle icons are side-view art, so they are NOT rotated** (rotating tips the wheels
-over). Instead the engine picks a mirrored variant by travel direction: each vehicle
-feature carries an `img` property of `'<kind>'` (faces east) or `'<kind>-flip'` (mirrored,
-faces west, chosen when `bearing > 180`), and `MapView` registers `bus`/`train` plus
-canvas-mirrored `bus-flip`/`train-flip` images. If you swap in **top-down** icons later,
-restore `icon-rotate` in `vehicleLayer` and emit `bearing`/`forward` instead.
+**Vehicle icons are top-down art, so they ARE rotated to the travel bearing.** Each vehicle
+feature carries `img` (the MapLibre image id — `'bus-default'` or `'train'`), `rotate`
+(`(bearing − forward + 360) % 360`, applied via `icon-rotate` with
+`icon-rotation-alignment: 'map'`), `size` (per-kind base scale), and a per-frame `bob`
+offset. `forward` is the compass heading the art faces unrotated — **bus = 0 (nose north),
+train = 135** — set in the `ICONS` table in `config.ts`; if you swap the art, update only
+those. The bus image id is **`bus-default`**, not `bus`, so it can't collide with the
+basemap sprite's own `bus` glyph. The engine recomputes `bearing` every frame from the
+displacement between the last two rendered positions (Calgary gives no bearing), so the
+nose follows the shape continuously rather than snapping once per fix. `MapView` registers
+each PNG into the style at load, knocking out a connected light background (flood-fill) and
+downscaling to `ICON_MAX_W`. (A mirrored `-flip` registration path still exists for the old
+side-view scheme but is unused now that icons rotate.)
+
+**Density-by-zoom:** each vehicle gets a stable `rank ∈ [0,1)` hashed from its id. Two
+layers split by disjoint filters — `vehicles-overview` always draws the low-rank sample
+(`rank < VEH_OVERVIEW_FRACTION`, ~18%) so zoomed-out views still show area activity, and
+`vehicles` draws the rest only at/above `VEH_ALL_ZOOM` (13). At high zoom the two together
+= every vehicle, no duplicates. Both layers scale `icon-size` down with zoom; bobbing stops
+below `BOB_MIN_ZOOM` (12).
 
 ---
 
@@ -287,7 +308,8 @@ into themed red counted badges; zooming in splits them into individual
 | 5.2–5.3 | Tunable cluster zoom + `#zoomcap` readout; declutter on track; distance-gated due/depart; blue tracked-route; route-number labels; "ETA:/Late:" labels + red Late + anchored timer | `index.html` |
 | 6 | **Snap-to-shape animation** (ride the road via `shape_id` + Turf.js) + blue bus→stop route that trims on the render loop; `/api/trip/{id}/next-stop` (vehicle-click → next stop + Track); `Cache-Control: no-store` | `build_map.py`, `server.py`, `index.html` |
 | 7.0 | Restructure → `backend/` + `frontend/` (HTML/CSS/ES-module split); server serves the frontend folder; `docs/` learning material | all |
-| 7 | **React + TS + MapLibre GL frontend** (`frontend-react/`): vector basemap, GPU GeoJSON layers (native stop clustering + label declutter, icon-rotate by data), snap-to-shape rAF engine ported to `lib/engine.ts`, zustand chrome, React popups/track-bar; backend serves `dist/` when built (`FRONTEND_DIR` override). Same JSON contract. | `frontend-react/*`, `server.py` |
+| 7 | **React + TS + MapLibre GL frontend** (`frontend-react/`): vector basemap, GPU GeoJSON layers, snap-to-shape rAF engine ported to `lib/engine.ts`, zustand chrome, React popups/track-bar; backend serves `dist/` when built (`FRONTEND_DIR` override). Same JSON contract. | `frontend-react/*`, `server.py` |
+| 7.1 | **Clean "Uber day" redesign** of the React app: Positron/`dataviz` basemap, **stops-at-z14 declutter** (dropped clustering) + **density-by-zoom vehicles** (rank sample + zoom-gated full layer); **top-down icons rotated to a per-frame bearing** (continuity-constrained, no flip); track-zoom 18; selected-stop pin = bigger + slow float + vehicle-style glow; `TrackBubble` isolated for smooth follow; red stop-popup header; bottom-right locate FAB + collapsible attribution. | `config.ts`, `engine.ts`, `layers.ts`, `MapView.tsx`, `index.css`, `App.tsx` |
 
 Phase 5 implementation notes:
 - **"Nearest vehicle" = soonest predicted arrival**, NOT geographically closest
@@ -300,11 +322,11 @@ Phase 5 implementation notes:
 
 ## Next phases (planned)
 
-> Phases 6 (snap-to-route) and **7 (React + MapLibre)** are **done** — see the
-> animation-engine section and the "React frontend" section above. The backend JSON
-> contract was unchanged by the rewrite (renderer is swappable without touching Python).
-> Remaining Phase 7 polish if desired: tune the MapTiler basemap style, code-split the
-> 1 MB maplibre-gl chunk, then retire `frontend/` once the React app is signed off.
+> Phases 6 (snap-to-route) and **7 / 7.1 (React + MapLibre + clean redesign)** are **done**
+> — see the animation-engine section and the "React frontend" section above. The backend
+> JSON contract was unchanged by the rewrite (renderer is swappable without touching
+> Python). Remaining Phase 7 polish if desired: code-split the 1 MB maplibre-gl chunk, then
+> retire `frontend/` once the React app is signed off.
 
 ### Phase 8 — Docker + docker-compose
 Containerize backend (Python/FastAPI), frontend (Nginx or Vite build),

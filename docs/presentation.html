@@ -259,11 +259,13 @@
       <text x="580" y="135" fill="#9fb0c8" font-size="13" text-anchor="middle">zoomed in: individual pins</text>
     </svg>
     <div class="why"><b>Same idea, two costs avoided:</b> fewer things drawn (speed) and less
-      visual clutter (clarity). Below zoom 16 stops cluster; at/above 16 they split apart.</div>
-    <div class="why"><b>MapLibre makes this almost free.</b> The React app draws all 6000 stops
-      as one GPU layer with <b>built-in clustering</b> (<code>cluster:true</code> on the GeoJSON
-      source) and automatic label declutter — no plugin, and the old "perf cliff" constraint
-      simply goes away.</div>
+      visual clutter (clarity). In the Leaflet app, below zoom 16 stops collapse into counted
+      badges; at/above 16 they split apart.</div>
+    <div class="why"><b>The React app goes further for a cleaner look.</b> All 6000 stops live in
+      one GPU layer, so the DOM "perf cliff" is gone either way — but instead of clustering it
+      simply <b>declutters by zoom</b>: stops only draw at zoom ≥ 14, and vehicles are
+      density-gated too (a stable sample when zoomed out, all of them up close). Less on the
+      map, more like the calm "Uber day" basemap it sits on.</div>
   </section>
 
   <!-- 7. TRACKING -->
@@ -331,8 +333,9 @@
     <div class="grid2">
       <div class="card"><h3 style="margin-top:8px; color:var(--green)">MapLibre GL ✓ done</h3>
         <p>The Leaflet renderer was swapped for GPU vector rendering in React — smoother
-          camera, native clustering, data-driven icons. The JSON API stayed identical, so
-          only the renderer changed.</p></div>
+          camera, a clean Positron basemap, zoom-based declutter, and data-driven icons that
+          rotate to their bearing. The JSON API stayed identical, so only the renderer
+          changed.</p></div>
       <div class="card"><h3 style="margin-top:8px">Docker + cloud</h3>
         <p>Containerise the backend + frontend, add PostGIS for history/spatial queries,
           deploy to Fly.io / Render.</p></div>

@@ -69,7 +69,7 @@
     <a href="#re-engine">lib/engine.ts</a>
     <a href="#re-map">MapView / layers</a>
     <a href="#re-ui">store / network / UI</a>
-    <a href="#re-icons">vehicle icons (flip)</a>
+    <a href="#re-icons">vehicle icons (rotate)</a>
     <a class="head">Frontend (Leaflet · legacy)</a>
     <a href="#fe-overview">Module graph</a>
     <a href="#m-config">config / state / format</a>
@@ -212,7 +212,7 @@ docs/              this reference + presentation.html</code></pre>
         track bar, popups, bubble) at 1–5 Hz.</p>
     </div>
     <pre><code>App ─┬─ MapView  (the &lt;Map&gt; + Sources/Layers + Popups + GeolocateControl)
-     │     ├─ map sources: shapes · stops(clustered) · vehicles · tracked-route
+     │     ├─ map sources: shapes · stops · vehicles · tracked-route
      │     │               · selstop · veh-halo      ← engine setData()s these
      │     └─ ui/ StopPopup · VehiclePopup · EtaRow
      ├─ TrackBar          ← reads store (tracked, bubble)
@@ -247,12 +247,12 @@ lib/network.ts  loadNetwork() → GeoJSON + shapesById / stopById lookups</code>
         <code>&lt;Source&gt;</code>/<code>&lt;Layer&gt;</code>s, registers the icon images on
         load, <code>engine.attach(map)</code>s, polls <code>/api/vehicles</code> every 15 s,
         and renders the popups + floating bubble as <code>&lt;Popup&gt;</code>s. Clicks are
-        dispatched by <code>interactiveLayerIds</code> (vehicle → next stop, stop → ETA,
-        cluster → expand zoom).</li>
-      <li><b>layers</b> — data-driven layer styles: route lines, <b>native GeoJSON
-        clustering</b> (<code>cluster:true</code> on the stops source — replaces the
-        markercluster plugin), the stop pins, the vehicles symbol layer, the route-number
-        label layer (<code>minzoom</code> declutter), and the tracked-route / highlight layers.</li>
+        dispatched by <code>interactiveLayerIds</code> (vehicle → next stop, stop → ETA).</li>
+      <li><b>layers</b> — data-driven layer styles for the clean "Uber day" look: route
+        lines, the stop pins (<code>minzoom</code> 14 declutter — no clustering), <b>two
+        zoom-gated vehicle layers</b> (a low-<code>rank</code> sample always, the full layer
+        at/above zoom 13) so density scales with zoom, the route-number label layer
+        (<code>minzoom</code> 16), and the tracked-route / highlight layers.</li>
     </ul>
 
     <h2 id="re-ui"><span class="mod">store.ts</span> / <span class="mod">network.ts</span> / UI</h2>
@@ -261,7 +261,7 @@ lib/network.ts  loadNetwork() → GeoJSON + shapesById / stopById lookups</code>
         bubble, trackedPos, popup</code>. The encapsulated replacement for the Leaflet
         <code>app</code> singleton, but only for what React renders.</li>
       <li><b>network</b> — <code>loadNetwork()</code> fetches <code>/api/network</code> once
-        → a shapes GeoJSON + a clustered stops GeoJSON, and fills the <code>shapesById</code>
+        → a shapes GeoJSON + a stops GeoJSON, and fills the <code>shapesById</code>
         (Turf lines for snapping) and <code>stopById</code> (lng/lat/name) lookups the engine needs.</li>
       <li><b>EtaRow</b> — ONE reusable arrival row (route badge + headsign + ETA/Late + Track),
         replacing the three hand-built HTML-string versions. <b>StopPopup</b> fetches a stop's
@@ -270,14 +270,18 @@ lib/network.ts  loadNetwork() → GeoJSON + shapesById / stopById lookups</code>
         manual escaping (React escapes for us).</li>
     </ul>
 
-    <h2 id="re-icons">Vehicle icons — flip, don't rotate</h2>
-    <p>The vehicle PNGs are <b>side-view</b> art (wheels on the bottom), so rotating them to
-      the travel bearing tips them over. Instead the engine emits an <code>img</code> property
-      of <code>'&lt;kind&gt;'</code> (faces east) or <code>'&lt;kind&gt;-flip'</code> (mirrored,
-      faces west, chosen when <code>bearing &gt; 180</code>), and MapView registers
-      <code>bus</code>/<code>train</code> plus canvas-mirrored <code>bus-flip</code>/<code>train-flip</code>
-      images. The symbol layer just does <code>icon-image: ['get','img']</code> — no
-      <code>icon-rotate</code>. (For top-down icons later, restore rotation instead.)</p>
+    <h2 id="re-icons">Vehicle icons — top-down, rotated to bearing</h2>
+    <p>The vehicle PNGs are <b>top-down</b> art (bus nose pointing north), so they
+      <b>rotate</b> to the travel bearing. Each vehicle feature carries a <code>rotate</code>
+      property = <code>(bearing − forward + 360) % 360</code> (<code>forward</code> is the
+      heading the art faces unrotated — bus 0, train 135), applied by the symbol layer via
+      <code>icon-rotate: ['get','rotate']</code> with
+      <code>icon-rotation-alignment: 'map'</code>. Calgary's feed has no bearing, so the
+      engine derives it <b>every frame</b> from the displacement between the last two
+      rendered positions — the nose follows the shape smoothly rather than snapping once per
+      30 s fix. The bus image id is <code>bus-default</code> (not <code>bus</code>) so it can't
+      collide with the basemap sprite's own <code>bus</code> glyph; MapView registers each PNG
+      at load, flood-filling away a light background and downscaling to <code>ICON_MAX_W</code>.</p>
 
     <h2 id="fe-overview">Leaflet frontend (legacy) — module graph</h2>
     <p>CDN libraries (<code>L</code> Leaflet, <code>markercluster</code>, <code>turf</code>)
