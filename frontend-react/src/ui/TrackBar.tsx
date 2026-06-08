@@ -18,8 +18,8 @@ export function TrackBar() {
           Route {tracked.route} · {bubble?.text ?? ''}{distTxt}
         </div>
       </span>
-      {!tracked.following && <button onClick={() => engine.resumeFollow()}>follow</button>}
-      <button onClick={() => engine.stopTracking()}>stop</button>
+      {!tracked.following && <button onClick={() => engine.resumeFollow()}>Follow</button>}
+      <button onClick={() => engine.stopTracking()}>Stop</button>
     </div>
   );
 }

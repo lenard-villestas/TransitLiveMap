@@ -47,31 +47,33 @@ export const stopLayer = {
   minzoom: STOP_MINZOOM,
   layout: {
     'icon-image': 'stop',
-    'icon-size': 0.9,
+    'icon-size': 0.4,                 // 'stop' art is downscaled to ~72px native (ICON_MAX_W)
     'icon-anchor': 'bottom',
     'icon-allow-overlap': true,
   },
 } as LayerProps;
 
-// the one highlighted stop shown while tracking / previewing (own source)
+// the one highlighted stop shown while tracking / previewing (own source) — same soft
+// pulsing glow the tracked vehicle uses (radius animated by the engine)
 export const selStopHaloLayer = {
   id: 'selstop-halo',
   type: 'circle',
   paint: {
-    'circle-color': 'rgba(37,99,235,0.25)',
-    'circle-radius': 14,            // animated by the engine
-    'circle-stroke-color': '#2563eb',
-    'circle-stroke-width': 2,
+    'circle-color': 'rgba(37,99,235,0.35)',
+    'circle-radius': 16,            // animated by the engine
+    'circle-blur': 0.4,
   },
 } as LayerProps;
 
+// bigger than the normal stop pin (≈ +50%) and bobs via the per-frame `bob` offset
 export const selStopPinLayer = {
   id: 'selstop-pin',
   type: 'symbol',
   layout: {
     'icon-image': 'stop',
-    'icon-size': 0.95,
+    'icon-size': 0.6,                 // ≈ +50% vs the normal stop pin (0.4)
     'icon-anchor': 'bottom',
+    'icon-offset': ['get', 'bob'],
     'icon-allow-overlap': true,
   },
 } as LayerProps;
@@ -109,7 +111,12 @@ export const vehicleOverviewLayer = {
   filter: ['<', ['get', 'rank'], VEH_OVERVIEW_FRACTION],
   layout: {
     'icon-image': ['get', 'img'],
-    'icon-size': 0.8,
+    'icon-size': ['interpolate', ['linear'], ['zoom'],
+      10, ['*', ['get', 'size'], 0.45],     // zoomed out → scaled down
+      14, ['get', 'size']],                 // z14+ → full per-kind size
+    'icon-offset': ['get', 'bob'],
+    'icon-rotate': ['get', 'rotate'],
+    'icon-rotation-alignment': 'map',
     'icon-allow-overlap': true,
     'icon-ignore-placement': true,
   },
@@ -122,7 +129,12 @@ export const vehicleLayer = {
   filter: ['>=', ['get', 'rank'], VEH_OVERVIEW_FRACTION],
   layout: {
     'icon-image': ['get', 'img'],
-    'icon-size': 0.8,
+    'icon-size': ['interpolate', ['linear'], ['zoom'],
+      10, ['*', ['get', 'size'], 0.45],     // zoomed out → scaled down
+      14, ['get', 'size']],                 // z14+ → full per-kind size
+    'icon-offset': ['get', 'bob'],
+    'icon-rotate': ['get', 'rotate'],
+    'icon-rotation-alignment': 'map',
     'icon-allow-overlap': true,
     'icon-ignore-placement': true,
   },
@@ -137,8 +149,8 @@ export const vehicleLabelLayer = {
     'text-field': ['get', 'short'],
     'text-font': ['Noto Sans Bold'],
     'text-size': 11,
-    'text-anchor': 'bottom',
-    'text-offset': [0, -1.3],
+    'text-anchor': 'left',
+    'text-offset': [1.2, 0],
     'text-allow-overlap': false,
   },
   paint: {

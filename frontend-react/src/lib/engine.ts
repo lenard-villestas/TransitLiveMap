@@ -10,7 +10,8 @@ import * as turf from '@turf/turf';
 import type { GeoJSONSource, Map as MlMap } from 'maplibre-gl';
 import type { Feature, FeatureCollection, LineString, Point } from 'geojson';
 import {
-  REFRESH_MS, ICONS, OFFROAD_M, MAX_SPEED_MPS, JUMP_SLACK_M, DUE_M, DEPART_M, RETURN_ZOOM, API,
+  REFRESH_MS, ICONS, OFFROAD_M, MAX_SPEED_MPS, JUMP_SLACK_M, BOB_AMP_PX, BOB_PERIOD_MS, BOB_MIN_ZOOM,
+  DUE_M, DEPART_M, RETURN_ZOOM, TRACK_ZOOM, API,
 } from '../config';
 import type { VehiclesResponse, EtaArrival, StopEtaResponse, NextStopResponse } from '../types';
 import { shapesById, shapeLenById, stopById } from './network';
@@ -65,9 +66,9 @@ class Engine {
   private lastPan: [number, number] | null = null;
   private lastRouteT = 0;
   private lastBubbleT = 0;
-  private lastPosT = 0;
   private departing = false;
   private selStopActive = false;
+  private selStop: [number, number] | null = null;   // coords of the highlighted stop (for the bob loop)
   private vehHaloActive = false;
 
   // vehicle-click preview (highlight bus + its next stop before committing to track)
@@ -170,6 +171,7 @@ class Engine {
     for (const v of this.veh.values()) {
       if (v.settled) continue;
       const t = v.dur ? Math.min((now - v.startT) / v.dur, 1) : 1;
+      const pLat = v.lat, pLng = v.lng;             // position before this frame's update
       if (v.mode === 'shape' && v.line) {
         const d = lerp(v.fromDist, v.toDist, t);
         v.curDist = d;
@@ -179,6 +181,9 @@ class Engine {
         v.lat = lerp(v.fromLat, v.toLat, t);
         v.lng = lerp(v.fromLon, v.toLon, t);
       }
+      // heading = frame-to-frame travel direction (the path tangent) → nose follows the
+      // road's curve continuously. Guard the zero-length case (would snap to north).
+      if (distM(pLat, pLng, v.lat, v.lng) > 0.1) v.bearing = bearingDeg(pLat, pLng, v.lat, v.lng);
       if (t >= 1) v.settled = true;
     }
     this.pushVehicles();
@@ -197,7 +202,9 @@ class Engine {
 
     if (t && this.veh.has(t.id)) {
       const v = this.veh.get(t.id)!;
-      if (now - this.lastPosT > 200) { this.store().set({ trackedPos: [v.lng, v.lat] }); this.lastPosT = now; }
+      // bubble anchor at 60 fps (only when it actually moves) so it tracks the bus smoothly
+      const tp = this.store().trackedPos;
+      if (!tp || tp[0] !== v.lng || tp[1] !== v.lat) this.store().set({ trackedPos: [v.lng, v.lat] });
       if (now - this.lastBubbleT > 1000) { this.updateBubble(); this.lastBubbleT = now; }
     }
 
@@ -207,6 +214,8 @@ class Engine {
   private pushVehicles() {
     const src = this.src('vehicles');
     if (!src) return;
+    const now = performance.now();
+    const z = this.map?.getZoom() ?? 99;            // bobbing is suppressed when zoomed out
     const t = this.tracked;
     const feats: Feature<Point>[] = [];
     for (const v of this.veh.values()) {
@@ -215,12 +224,19 @@ class Engine {
       // 180–360) so the bus faces its direction of travel but stays upright.
       // ICONS[kind].image is the registered image id (namespaced to dodge the
       // basemap sprite's own 'bus' glyph).
-      const img = ICONS[v.kind].image + (v.bearing > 180 ? '-flip' : '');
+      // rotate the icon so its nose points along the travel bearing (forward = the
+      // compass dir the art faces at rest); replaces the old east/west mirror.
+      const img = ICONS[v.kind].image;
+      const rotate = (v.bearing - ICONS[v.kind].forward + 360) % 360;
       // tracked bus → rank 0 so it's always in the overview sample (never vanishes zoomed out)
       const rank = t && v.id === t.id ? 0 : v.rank;
+      // gentle vertical "bob" while gliding (per-vehicle phase via rank); off when settled
+      // or zoomed out past BOB_MIN_ZOOM
+      const bob = v.settled || z < BOB_MIN_ZOOM ? [0, 0]
+        : [0, Math.sin(now / BOB_PERIOD_MS * Math.PI * 2 + v.rank * Math.PI * 2) * BOB_AMP_PX];
       feats.push({
         type: 'Feature',
-        properties: { id: v.id, short: v.short, img, rank },
+        properties: { id: v.id, short: v.short, img, rank, bob, rotate, size: ICONS[v.kind].size },
         geometry: { type: 'Point', coordinates: [v.lng, v.lat] },
       });
     }
@@ -248,6 +264,7 @@ class Engine {
     }
     this.lastPan = null;
     this.departing = false;
+    this.map?.jumpTo({ center: [v.lng, v.lat], zoom: TRACK_ZOOM });  // zoom in on the bus
     this.setStopsVisible(false);                     // declutter: hide all other stops
     this.setSelStop(stop ?? null);                   // show only this one (glowing)
     this.previewVehId = null; this.previewArrival = null; this.previewStopId = null;
@@ -381,12 +398,10 @@ class Engine {
       padding: { top: 130, bottom: 60, left: 60, right: 60 },
       maxZoom: 16, duration: 600,
     });
+    // open the SAME popup as clicking the stop directly (its next-3 arrivals + Track),
+    // anchored at the vehicle's next stop. The clicked bus appears in that list.
     this.store().set({
-      popup: {
-        kind: 'vehicle', lng: stop.lng, lat: stop.lat,
-        stopName: stop.name, route: data.route ?? '?', headsign: data.headsign ?? '',
-        etaSeconds: data.eta_seconds ?? 0, canTrack: true,
-      },
+      popup: { kind: 'stop', lng: stop.lng, lat: stop.lat, stopId: data.stop_id!, name: stop.name },
     });
   }
 
@@ -424,11 +439,21 @@ class Engine {
 
   private setSelStop(stop: { lng: number; lat: number } | null) {
     if (!stop) { this.clearSelStop(); return; }
-    const feat: Feature<Point> = { type: 'Feature', properties: {}, geometry: { type: 'Point', coordinates: [stop.lng, stop.lat] } };
-    this.src('selstop')?.setData({ type: 'FeatureCollection', features: [feat] });
+    this.selStop = [stop.lng, stop.lat];
     this.selStopActive = true;
+    this.renderSelStop([0, 0]);
   }
-  private clearSelStop() { this.src('selstop')?.setData(EMPTY); this.selStopActive = false; }
+  private clearSelStop() { this.src('selstop')?.setData(EMPTY); this.selStopActive = false; this.selStop = null; }
+
+  // (re)write the selected-stop feature with the current bob offset (the pin bounces)
+  private renderSelStop(bob: number[]) {
+    if (!this.selStop) return;
+    const feat: Feature<Point> = {
+      type: 'Feature', properties: { bob },
+      geometry: { type: 'Point', coordinates: this.selStop },
+    };
+    this.src('selstop')?.setData({ type: 'FeatureCollection', features: [feat] });
+  }
 
   private setHalo(lngLat: [number, number] | null) {
     if (!lngLat) {
@@ -452,8 +477,10 @@ class Engine {
     } else {
       this.setHalo(null);
     }
-    if (this.selStopActive && this.map.getLayer('selstop-halo')) {
-      this.map.setPaintProperty('selstop-halo', 'circle-radius', 12 * pulse);
+    if (this.selStopActive) {
+      if (this.map.getLayer('selstop-halo')) this.map.setPaintProperty('selstop-halo', 'circle-radius', 16 * pulse);
+      // slow, gentle float (anchored at its base) — like it's hovering
+      this.renderSelStop([0, Math.sin(now / 1600 * Math.PI * 2) * 2.5]);
     }
   }
 }

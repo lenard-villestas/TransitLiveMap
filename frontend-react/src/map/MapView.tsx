@@ -13,29 +13,75 @@ import type { Map as MlMap, GeolocateControl as GeolocateControlInstance } from 
 import type { FeatureCollection } from 'geojson';
 import 'maplibre-gl/dist/maplibre-gl.css';
 
-import { MAP_STYLE, CALGARY_VIEW, ICON_FILES, REFRESH_MS, API } from '../config';
+import { MAP_STYLE, CALGARY_VIEW, ICON_FILES, ICON_MAX_W, REFRESH_MS, API } from '../config';
 import { engine } from '../lib/engine';
 import { loadNetwork, type NetworkGeo } from '../lib/network';
 import { useStore } from '../store';
 import type { VehiclesResponse } from '../types';
 import { StopPopup } from '../ui/StopPopup';
 import { VehiclePopup } from '../ui/VehiclePopup';
+import { TrackBubble } from '../ui/TrackBubble';
 import * as layers from './layers';
 
 const EMPTY: FeatureCollection = { type: 'FeatureCollection', features: [] };
 
-// Horizontally-mirror a loaded image (for the '-flip' vehicle variants).
-function mirror(img: CanvasImageSource & { width: number; height: number }): ImageData | null {
-  const { width: w, height: h } = img;
-  if (!w || !h) return null;
-  const canvas = document.createElement('canvas');
-  canvas.width = w; canvas.height = h;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return null;
-  ctx.translate(w, 0);
-  ctx.scale(-1, 1);
-  ctx.drawImage(img, 0, 0);
-  return ctx.getImageData(0, 0, w, h);
+// Make a connected LIGHT background transparent: flood-fill inward from every border
+// pixel, clearing near-white/light-grey pixels. Connectivity-based, so light areas
+// *inside* the vehicle (windows, highlights) are preserved. No-op on art that already
+// has a transparent border. Run at full res so edge halos shrink away on downscale.
+function knockOutLightBg(ctx: CanvasRenderingContext2D, w: number, h: number) {
+  const T = 190;                              // a pixel counts as background if R,G,B all ≥ T
+  const id = ctx.getImageData(0, 0, w, h);
+  const d = id.data;
+  const isBg = (p: number) => {
+    const i = p * 4;
+    return d[i + 3] > 0 && d[i] >= T && d[i + 1] >= T && d[i + 2] >= T;
+  };
+  const visited = new Uint8Array(w * h);
+  const stack: number[] = [];
+  for (let x = 0; x < w; x++) { stack.push(x, (h - 1) * w + x); }
+  for (let y = 0; y < h; y++) { stack.push(y * w, y * w + w - 1); }
+  while (stack.length) {
+    const p = stack.pop()!;
+    if (visited[p]) continue;
+    visited[p] = 1;
+    if (!isBg(p)) continue;
+    d[p * 4 + 3] = 0;                          // clear alpha
+    const x = p % w, y = (p - x) / w;
+    if (x > 0) stack.push(p - 1);
+    if (x < w - 1) stack.push(p + 1);
+    if (y > 0) stack.push(p - w);
+    if (y < h - 1) stack.push(p + w);
+  }
+  ctx.putImageData(id, 0, 0);
+}
+
+// Prepare a loaded image for the style: knock out a light background, downscale to
+// ICON_MAX_W (only shrinks), and optionally mirror it (the '-flip' variants).
+function prepImage(
+  img: CanvasImageSource & { width: number; height: number },
+  flip: boolean,
+): ImageData | null {
+  const w0 = img.width, h0 = img.height;
+  if (!w0 || !h0) return null;
+  // 1) full-res pass: clear the connected light backdrop
+  const full = document.createElement('canvas');
+  full.width = w0; full.height = h0;
+  const fctx = full.getContext('2d');
+  if (!fctx) return null;
+  fctx.drawImage(img, 0, 0);
+  knockOutLightBg(fctx, w0, h0);
+  // 2) downscale (cap the LARGER dimension, so tall/long art shrinks too) + optional mirror
+  const scale = Math.min(1, ICON_MAX_W / Math.max(w0, h0));
+  const w = Math.max(1, Math.round(w0 * scale));
+  const h = Math.max(1, Math.round(h0 * scale));
+  const out = document.createElement('canvas');
+  out.width = w; out.height = h;
+  const octx = out.getContext('2d');
+  if (!octx) return null;
+  if (flip) { octx.translate(w, 0); octx.scale(-1, 1); }
+  octx.drawImage(full, 0, 0, w, h);
+  return octx.getImageData(0, 0, w, h);
 }
 
 export function MapView() {
@@ -44,9 +90,6 @@ export function MapView() {
   const [ready, setReady] = useState(false);
 
   const popup = useStore((s) => s.popup);
-  const trackedPos = useStore((s) => s.trackedPos);
-  const tracked = useStore((s) => s.tracked);
-  const bubble = useStore((s) => s.bubble);
 
   // load the static network once
   useEffect(() => {
@@ -81,12 +124,12 @@ export function MapView() {
         .then((img) => {
           if (!img || map.hasImage(id)) return;
           const raw = img.data as HTMLImageElement | ImageBitmap;
-          const data = flip ? mirror(raw) : raw;
+          const data = prepImage(raw, flip);
           if (data) map.addImage(id, data);
         })
         .catch(() => {});
     };
-    ['bus-default', 'train', 'stop', 'bus-default-flip', 'train-flip'].forEach(ensureIcon);
+    ['bus-default', 'train', 'stop'].forEach(ensureIcon);
     map.on('styleimagemissing', (ev) => ensureIcon((ev as { id: string }).id));
     engine.attach(map);
     setReady(true);
@@ -110,9 +153,11 @@ export function MapView() {
   const closePopup = () => { useStore.getState().set({ popup: null }); engine.previewClear(); };
 
   return (
+    <>
     <Map
       initialViewState={CALGARY_VIEW}
       mapStyle={MAP_STYLE}
+      attributionControl={false}
       style={{ position: 'fixed', inset: 0 }}
       onLoad={onLoad}
       onClick={onClickMap}
@@ -156,7 +201,7 @@ export function MapView() {
 
       {popup && popup.kind === 'stop' && (
         <Popup longitude={popup.lng} latitude={popup.lat} anchor="bottom" offset={34}
-          closeOnClick={false} onClose={closePopup} maxWidth="260px">
+          closeOnClick={false} onClose={closePopup} maxWidth="260px" className="stop-popup">
           <StopPopup stopId={popup.stopId} name={popup.name} />
         </Popup>
       )}
@@ -166,13 +211,13 @@ export function MapView() {
           <VehiclePopup p={popup} />
         </Popup>
       )}
-      {tracked && trackedPos && bubble && (
-        <Popup longitude={trackedPos[0]} latitude={trackedPos[1]} anchor="bottom" offset={20}
-          closeButton={false} closeOnClick={false} className="eta-bubble" focusAfterOpen={false}>
-          <div className="bub-stop" title={tracked.stopName}>{tracked.stopName}</div>
-          <div className={'bub-time' + (bubble.late ? ' late' : '')}>{bubble.text}</div>
-        </Popup>
-      )}
+      <TrackBubble />
     </Map>
+    <button className="locate-fab" title="My location" onClick={() => geoRef.current?.trigger()}>
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M12 2 4.5 20.29l.71.71L12 18l6.79 3 .71-.71z" />
+      </svg>
+    </button>
+    </>
   );
 }

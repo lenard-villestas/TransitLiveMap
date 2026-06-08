@@ -10,17 +10,45 @@ body,
   background: #f7f7f5;
 }
 
-/* caption (top) + zoom readout (bottom-left) */
-#cap {
+/* top-left ⓘ: the map attribution (OpenStreetMap etc.) */
+#infobtn {
   position: absolute;
-  z-index: 1000;
+  z-index: 1001;
   top: 8px;
-  left: 50px;
+  left: 8px;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, .85);
+  color: #475569;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .3);
+}
+
+#infobtn:hover {
   background: #fff;
-  padding: 4px 8px;
+}
+
+#infopanel {
+  position: absolute;
+  z-index: 1001;
+  top: 8px;
+  left: 34px;
+  max-width: 300px;
+  background: rgba(255, 255, 255, .96);
+  padding: 5px 9px;
   border-radius: 6px;
-  font: 13px system-ui, sans-serif;
+  font: 11px system-ui, sans-serif;
+  color: #334155;
   box-shadow: 0 1px 4px rgba(0, 0, 0, .25);
+}
+
+#infopanel .attrib {
+  color: #64748b;
+  margin-top: 2px;
 }
 
 #zoomcap {
@@ -43,7 +71,7 @@ body,
 }
 
 #trackbar .late {
-  color: #f87171;
+  color: #dc2626;
 }
 
 /* ---- stop / vehicle ETA popup ---- */
@@ -129,20 +157,20 @@ body,
   bottom: 14px;
   left: 50%;
   transform: translateX(-50%);
-  background: #1f2937;
-  color: #fff;
+  background: #fff;
+  color: #1f2937;
   padding: 6px 12px;
   border-radius: 16px;
   display: none;
   align-items: center;
   gap: 6px;
   font: 13px system-ui, sans-serif;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, .4);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, .18), 0 1px 3px rgba(0, 0, 0, .12);
 }
 
 .tb-stop {
   font-size: 11px;
-  color: #cbd5e1;
+  color: #64748b;
   max-width: 220px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -155,12 +183,16 @@ body,
 
 #trackbar button {
   border: none;
-  background: #f59e0b;
-  color: #1f2937;
+  background: #dc2626;
+  color: #fff;
   font-weight: 700;
   border-radius: 12px;
   padding: 2px 10px;
   cursor: pointer;
+}
+
+#trackbar button:hover {
+  background: #b91c1c;
 }
 
 /* ---- floating ETA bubble above the tracked bus (a borderless MapLibre popup) ---- */
@@ -193,4 +225,59 @@ body,
 
 .bub-time {
   font-weight: 700;
+}
+
+/* ---- locate-me FAB (bottom-right); the built-in geolocate button is hidden ---- */
+.maplibregl-ctrl-group:has(.maplibregl-ctrl-geolocate) {
+  display: none;
+}
+
+.locate-fab {
+  position: absolute;
+  z-index: 1000;
+  bottom: 40px;
+  right: 16px;
+  width: 52px;
+  height: 52px;
+  border: none;
+  border-radius: 50%;
+  background: #dc2626;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, .35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.locate-fab:hover {
+  background: #b91c1c;
+}
+
+.locate-fab svg {
+  width: 28px;
+  height: 28px;
+  fill: #fff;
+}
+
+/* ---- bus-stop popup: red header flush with the top edge, white text ---- */
+.stop-popup .maplibregl-popup-content {
+  padding: 0;                 /* drop the default content padding so the header can sit flush */
+  overflow: hidden;           /* clip the header's corners to the popup radius */
+}
+
+.stop-popup .eta-list {
+  padding: 0 12px 10px;       /* re-add padding for the rows only (header breaks out of it) */
+}
+
+.stop-popup .eta-title {
+  background: #dc2626;
+  color: #fff;
+  margin: 0 -12px 8px;        /* break out horizontally to the edges; top stays flush */
+  padding: 8px 28px 8px 12px; /* right room for the × */
+  font-weight: 700;
+}
+
+.stop-popup .maplibregl-popup-close-button {
+  color: #fff;
+  font-size: 18px;
 }
