@@ -37,6 +37,26 @@ Calgary's static GTFS (a few seconds), then polls the live feeds every 15 s.
 Optional: put a free [MapTiler](https://www.maptiler.com/) key in `frontend-react/.env`
 as `VITE_MAPTILER_KEY=…`. Left blank, the app uses the keyless OpenFreeMap basemap.
 
+## Deploy
+
+The app is **single-origin** — one FastAPI process serves both the `/api/*` JSON and the
+built React bundle — so it deploys as a single container. The included multi-stage
+[`Dockerfile`](Dockerfile) builds the frontend with Node and serves it with Python; it binds
+`0.0.0.0:$PORT`, so it runs on any container host.
+
+```bash
+# build + run the production image locally
+docker build -t transit .
+docker run --rm -p 8000:8000 -e PORT=8000 transit   # → http://localhost:8000
+```
+
+**Render (free, auto-deploy from GitHub):** the repo ships a [`render.yaml`](render.yaml)
+Blueprint. In the Render dashboard → **New → Blueprint** → connect this repo → **Apply**.
+Render builds the Dockerfile and gives you a `https://…onrender.com` URL; every push to
+`master` redeploys automatically. The free instance sleeps when idle, so the first visit
+after a nap cold-starts (~30–60 s, re-downloading Calgary's static GTFS) before the live
+map fills in.
+
 ## Project layout
 
 ```

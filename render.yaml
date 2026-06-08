@@ -1,0 +1,11 @@
+# Render Blueprint (Infrastructure-as-Code): one free Docker web service that builds from
+# the Dockerfile and auto-deploys on every push to the default branch.
+# Deploy: Render dashboard → New → Blueprint → connect this repo → Apply.
+services:
+  - type: web
+    name: calgary-transit-live
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/vehicles      # returns 200 ({vehicles:[],…}) as soon as the app is up
+    autoDeploy: true

@@ -1,0 +1,13 @@
+# Keep the build context small and avoid copying local/build state into the image.
+node_modules
+**/node_modules
+frontend-react/dist
+.venv
+**/__pycache__
+*.pyc
+.git
+.gitignore
+.env
+*.pb
+map.html
+docs
