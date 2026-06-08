@@ -112,7 +112,8 @@ export const vehicleOverviewLayer = {
   layout: {
     'icon-image': ['get', 'img'],
     'icon-size': ['interpolate', ['linear'], ['zoom'],
-      10, ['*', ['get', 'size'], 0.45],     // zoomed out → scaled down
+      9, ['*', ['get', 'size'], 0.2],       // far out → much smaller so the glide between fixes reads
+      12, ['*', ['get', 'size'], 0.4],      // mid zoom → still compact
       14, ['get', 'size']],                 // z14+ → full per-kind size
     'icon-offset': ['get', 'bob'],
     'icon-rotate': ['get', 'rotate'],
@@ -130,7 +131,8 @@ export const vehicleLayer = {
   layout: {
     'icon-image': ['get', 'img'],
     'icon-size': ['interpolate', ['linear'], ['zoom'],
-      10, ['*', ['get', 'size'], 0.45],     // zoomed out → scaled down
+      9, ['*', ['get', 'size'], 0.2],       // far out → much smaller so the glide between fixes reads
+      12, ['*', ['get', 'size'], 0.4],      // mid zoom → still compact
       14, ['get', 'size']],                 // z14+ → full per-kind size
     'icon-offset': ['get', 'bob'],
     'icon-rotate': ['get', 'rotate'],

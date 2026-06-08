@@ -13,6 +13,6 @@ export function etaPhrase(secs: number): EtaText {
 
 // For stop-popup rows (time only): a small "due" window, else ETA:/Late:.
 export function etaParts(secs: number): EtaText {
-  if (secs <= 30 && secs >= -30) return { text: 'due', late: false };
+  if (secs <= 30 && secs >= -30) return { text: 'DUE', late: false };
   return etaPhrase(secs);
 }
