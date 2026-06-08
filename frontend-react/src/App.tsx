@@ -4,6 +4,8 @@
 import { useState } from 'react';
 import { MapView } from './map/MapView';
 import { TrackBar } from './ui/TrackBar';
+import { AppBar } from './ui/AppBar';
+import { ArrivalToast } from './ui/ArrivalToast';
 import { useStore } from './store';
 import { ATTRIBUTION } from './config';
 
@@ -12,7 +14,9 @@ export default function App() {
   const [showInfo, setShowInfo] = useState(false);
   return (
     <>
+      <AppBar />
       <MapView />
+      <ArrivalToast />
       {showInfo && (
         <div id="infopanel">
           <div className="attrib">{ATTRIBUTION}</div>

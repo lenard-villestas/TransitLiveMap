@@ -13,13 +13,20 @@ export function TrackBar() {
   return (
     <div id="trackbar" style={{ display: 'flex' }}>
       <span id="trackinfo">
+        <div className="tb-following">Following {tracked.vehicleLabel} {tracked.vehicleId}</div>
         <div className="tb-stop" title={tracked.stopName}>{tracked.stopName}</div>
         <div className={'tb-time' + (bubble?.late ? ' late' : '')}>
           Route {tracked.route} · {bubble?.text ?? ''}{distTxt}
         </div>
       </span>
-      {!tracked.following && <button onClick={() => engine.resumeFollow()}>Follow</button>}
-      <button onClick={() => engine.stopTracking()}>Stop</button>
+      {/* Follow stays visible: filled/active while following (tap re-centres), resumes after a pan */}
+      <button
+        className={'tb-follow' + (tracked.following ? ' is-active' : '')}
+        onClick={() => engine.resumeFollow()}
+      >
+        Follow
+      </button>
+      <button onClick={() => engine.stopTracking()}>Exit</button>
     </div>
   );
 }

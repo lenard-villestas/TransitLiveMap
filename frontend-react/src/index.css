@@ -2,6 +2,11 @@
    Ported from the Leaflet app.css; Leaflet-specific marker rules dropped (the
    vehicles/stops are now GPU symbol layers), MapLibre popup overrides added. */
 
+:root {
+  --appbar-h: 52px;                                   /* red header content height */
+  --appbar-total: calc(var(--appbar-h) + env(safe-area-inset-top));  /* + notch; map starts here */
+}
+
 html,
 body,
 #root {
@@ -10,19 +15,89 @@ body,
   background: #f7f7f5;
 }
 
+/* ---- red app header (title + live clock + server status) ---- */
+#appbar {
+  position: fixed;
+  z-index: 1100;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--appbar-total);
+  box-sizing: border-box;
+  padding: env(safe-area-inset-top) 14px 0;
+  background: #dc2626;
+  color: #fff;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, .25);
+  user-select: none;
+}
+
+.ab-title {
+  font: 700 16px/1.1 system-ui, sans-serif;
+  letter-spacing: .2px;
+}
+
+.ab-sub {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 2px;
+  font: 11px/1.1 system-ui, sans-serif;
+  color: rgba(255, 255, 255, .9);
+}
+
+.ab-sep {
+  opacity: .55;
+}
+
+.ab-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+/* mobile: don't let the page rubber-band / pull-to-refresh fight the map */
+html,
+body {
+  overscroll-behavior: none;
+}
+
+/* chrome buttons: no 300 ms tap delay, no grey tap flash on touch */
+#infobtn,
+#trackbar button,
+.eta-track,
+.locate-fab,
+.maplibregl-popup-close-button {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* don't select chrome text when panning the map near it (ETA popup text stays selectable) */
+#infobtn,
+#infopanel,
+#zoomcap,
+#trackbar,
+.locate-fab {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
 /* top-left ⓘ: the map attribution (OpenStreetMap etc.) */
 #infobtn {
   position: absolute;
   z-index: 1001;
-  top: 8px;
+  top: calc(var(--appbar-total) + 8px);
   left: 8px;
-  width: 22px;
-  height: 22px;
+  width: 34px;
+  height: 34px;
   border: none;
   border-radius: 50%;
   background: rgba(255, 255, 255, .85);
   color: #475569;
-  font-size: 14px;
+  font-size: 16px;
   line-height: 1;
   cursor: pointer;
   box-shadow: 0 1px 3px rgba(0, 0, 0, .3);
@@ -35,9 +110,9 @@ body,
 #infopanel {
   position: absolute;
   z-index: 1001;
-  top: 8px;
-  left: 34px;
-  max-width: 300px;
+  top: calc(var(--appbar-total) + 8px);
+  left: 46px;
+  max-width: min(300px, 90vw);
   background: rgba(255, 255, 255, .96);
   padding: 5px 9px;
   border-radius: 6px;
@@ -54,7 +129,7 @@ body,
 #zoomcap {
   position: absolute;
   z-index: 1000;
-  bottom: 14px;
+  bottom: max(14px, calc(env(safe-area-inset-bottom) + 10px));
   left: 10px;
   background: #fff;
   padding: 3px 8px;
@@ -76,7 +151,7 @@ body,
 
 /* ---- stop / vehicle ETA popup ---- */
 .eta-list {
-  font: 13px system-ui, sans-serif;
+  font: 14px system-ui, sans-serif;
   min-width: 190px;
 }
 
@@ -138,7 +213,8 @@ body,
   border-radius: 5px;
   cursor: pointer;
   font-size: 12px;
-  padding: 1px 7px;
+  min-height: 34px;
+  padding: 5px 12px;
 }
 
 .eta-track:hover:not(:disabled) {
@@ -154,7 +230,7 @@ body,
 #trackbar {
   position: absolute;
   z-index: 1000;
-  bottom: 14px;
+  bottom: max(14px, calc(env(safe-area-inset-bottom) + 10px));
   left: 50%;
   transform: translateX(-50%);
   background: #fff;
@@ -168,8 +244,14 @@ body,
   box-shadow: 0 6px 20px rgba(0, 0, 0, .18), 0 1px 3px rgba(0, 0, 0, .12);
 }
 
+.tb-following {
+  font-size: 13px;
+  font-weight: 700;
+  color: #1f2937;
+}
+
 .tb-stop {
-  font-size: 11px;
+  font-size: 12px;
   color: #64748b;
   max-width: 220px;
   overflow: hidden;
@@ -183,16 +265,26 @@ body,
 
 #trackbar button {
   border: none;
-  background: #dc2626;
+  background: #2563eb;
   color: #fff;
   font-weight: 700;
   border-radius: 12px;
-  padding: 2px 10px;
+  min-height: 36px;
+  width: 84px;                 /* fixed so Follow / Exit are always the same size */
+  flex: 0 0 auto;
+  padding: 6px 0;
+  text-align: center;
   cursor: pointer;
 }
 
 #trackbar button:hover {
-  background: #b91c1c;
+  background: #1d4ed8;
+}
+
+/* Follow while actively following: filled/active (tap re-centres) */
+#trackbar .tb-follow.is-active {
+  background: #1d4ed8;
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, .55);
 }
 
 /* ---- floating ETA bubble above the tracked bus (a borderless MapLibre popup) ---- */
@@ -215,7 +307,7 @@ body,
 }
 
 .bub-stop {
-  font-size: 10px;
+  font-size: 12px;
   color: #64748b;
   max-width: 180px;
   overflow: hidden;
@@ -235,8 +327,8 @@ body,
 .locate-fab {
   position: absolute;
   z-index: 1000;
-  bottom: 40px;
-  right: 16px;
+  bottom: max(40px, calc(env(safe-area-inset-bottom) + 16px));
+  right: max(16px, calc(env(safe-area-inset-right) + 16px));
   width: 52px;
   height: 52px;
   border: none;
@@ -279,5 +371,105 @@ body,
 
 .stop-popup .maplibregl-popup-close-button {
   color: #fff;
-  font-size: 18px;
+}
+
+/* bigger close-button hit area for thumbs (all ETA popups) */
+.maplibregl-popup-close-button {
+  width: 32px;
+  height: 32px;
+  font-size: 20px;
+}
+
+/* ---- "bus has arrived" toast (top-centre, below the header) ---- */
+#arrival-toast {
+  position: fixed;
+  z-index: 1090;
+  top: calc(var(--appbar-total) + 10px);
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: min(92vw, 420px);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #16a34a;
+  color: #fff;
+  padding: 9px 10px 9px 12px;
+  border-radius: 10px;
+  font: 13px system-ui, sans-serif;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, .22), 0 1px 3px rgba(0, 0, 0, .12);
+}
+
+.at-icon {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, .25);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.at-text {
+  flex: 1;
+  font-weight: 600;
+}
+
+.at-close {
+  flex: 0 0 auto;
+  border: none;
+  background: transparent;
+  color: #fff;
+  font-size: 20px;
+  line-height: 1;
+  padding: 0 2px;
+  cursor: pointer;
+  opacity: .85;
+}
+
+.at-close:hover {
+  opacity: 1;
+}
+
+/* ---- phone-only layout (≤ 640px) ---- */
+@media (max-width: 640px) {
+  /* pinch-to-zoom replaces the +/- buttons on touch (attribution control is off,
+     geolocate group already hidden — so this removes only the zoom control) */
+  .maplibregl-ctrl-top-right {
+    display: none;
+  }
+
+  /* track bar → full-width bottom bar spanning the bottom edge with padding */
+  #trackbar {
+    left: 10px;
+    right: 10px;
+    transform: none;
+  }
+
+  /* info column takes the slack so the two buttons stay grouped at the right */
+  #trackinfo {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .tb-stop {
+    max-width: none;
+  }
+
+  /* lift the locate FAB above the full-width bar while tracking (≈ bar height + gap) */
+  .locate-fab.is-tracking {
+    bottom: max(108px, calc(env(safe-area-inset-bottom) + 84px));
+  }
+
+  /* drop the developer zoom readout on phones */
+  #zoomcap {
+    display: none;
+  }
+
+  /* keep ETA popups within the screen */
+  .maplibregl-popup-content {
+    max-width: 90vw;
+  }
 }

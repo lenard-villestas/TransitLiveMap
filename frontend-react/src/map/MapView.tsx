@@ -24,6 +24,7 @@ import { TrackBubble } from '../ui/TrackBubble';
 import * as layers from './layers';
 
 const EMPTY: FeatureCollection = { type: 'FeatureCollection', features: [] };
+const POPUP_HALF_H = 90;   // ~half a stop ETA popup's height (px); used to centre it on click
 
 // Make a connected LIGHT background transparent: flood-fill inward from every border
 // pixel, clearing near-white/light-grey pixels. Connectivity-based, so light areas
@@ -90,6 +91,7 @@ export function MapView() {
   const [ready, setReady] = useState(false);
 
   const popup = useStore((s) => s.popup);
+  const tracked = useStore((s) => s.tracked);   // lifts the locate FAB above the track bar on mobile
 
   // load the static network once
   useEffect(() => {
@@ -104,7 +106,7 @@ export function MapView() {
         const data = (await (await fetch(API + '/api/vehicles')).json()) as VehiclesResponse;
         engine.refresh(data);
       } catch {
-        useStore.getState().set({ caption: 'fetch error' });
+        useStore.getState().set({ caption: 'fetch error', serverStatus: 'Down' });
       }
     };
     tick();
@@ -147,6 +149,9 @@ export function MapView() {
       const [lng, lat] = (f.geometry as GeoJSON.Point).coordinates;
       const props = f.properties as Record<string, string>;
       useStore.getState().set({ popup: { kind: 'stop', lng, lat, stopId: props.stop_id, name: props.name } });
+      // ease so the popup (anchored ABOVE the stop) sits centred: drop the stop point below
+      // the map centre by ~half the popup height.
+      (e.target as MlMap).easeTo({ center: [lng, lat], offset: [0, POPUP_HALF_H], duration: 600 });
     }
   };
 
@@ -158,7 +163,7 @@ export function MapView() {
       initialViewState={CALGARY_VIEW}
       mapStyle={MAP_STYLE}
       attributionControl={false}
-      style={{ position: 'fixed', inset: 0 }}
+      style={{ position: 'fixed', top: 'var(--appbar-total)', left: 0, right: 0, bottom: 0 }}
       onLoad={onLoad}
       onClick={onClickMap}
       onZoom={(e: ViewStateChangeEvent) => useStore.getState().set({ zoom: Math.round(e.target.getZoom()) })}
@@ -213,7 +218,7 @@ export function MapView() {
       )}
       <TrackBubble />
     </Map>
-    <button className="locate-fab" title="My location" onClick={() => geoRef.current?.trigger()}>
+    <button className={'locate-fab' + (tracked ? ' is-tracking' : '')} title="My location" onClick={() => geoRef.current?.trigger()}>
       <svg viewBox="0 0 24 24" aria-hidden="true">
         <path d="M12 2 4.5 20.29l.71.71L12 18l6.79 3 .71-.71z" />
       </svg>

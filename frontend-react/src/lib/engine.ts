@@ -63,10 +63,13 @@ class Engine {
   tracked: Tracked | null = null;
 
   private raf = 0;
+  private introPlaying = false;            // true during the track() zoom-out→fly-in; gates the follow-cam
+  private introTimers: number[] = [];      // pending setTimeouts for the intro sequence (cancellable)
   private lastPan: [number, number] | null = null;
   private lastRouteT = 0;
   private lastBubbleT = 0;
   private departing = false;
+  private arrivalAnnounced = false;        // fire the "has arrived" toast once per track session
   private selStopActive = false;
   private selStop: [number, number] | null = null;   // coords of the highlighted stop (for the bob loop)
   private vehHaloActive = false;
@@ -78,6 +81,17 @@ class Engine {
 
   private store() { return useStore.getState(); }
   private src(id: string) { return this.map?.getSource(id) as GeoJSONSource | undefined; }
+
+  // Build the reactive track-bar summary from the current tracked state + the live vehicle's
+  // kind. Single source of truth so every set({ tracked }) call carries the same fields.
+  private trackedSummary(following: boolean) {
+    const t = this.tracked!;
+    const kind = this.veh.get(t.id)?.kind;
+    return {
+      route: t.route, stopName: t.stopName, following,
+      vehicleId: t.id, vehicleLabel: kind === 'train' ? 'CTrain' : 'Bus',
+    };
+  }
 
   attach(map: MlMap) {
     this.map = map;
@@ -131,8 +145,17 @@ class Engine {
 
     this.store().set({
       caption: `${data.vehicles.length} vehicles · snapshot ${data.age}s old · refreshed ${new Date().toLocaleTimeString()}`,
+      serverStatus: this.serverStatusFor(data.age),
     });
     this.pushVehicles();
+  }
+
+  // Map snapshot age → the header's "Server: …" health word.
+  private serverStatusFor(age: number | null): string {
+    if (age == null) return 'No data';
+    if (age > 180) return 'Stale';
+    if (age > 75) return 'Delayed';
+    return 'Good';
   }
 
   // Aim a vehicle at its new GPS fix: snap ALONG its shape if it's on it, else lerp.
@@ -189,7 +212,7 @@ class Engine {
     this.pushVehicles();
 
     const t = this.tracked;
-    if (t && t.following && this.veh.has(t.id)) {
+    if (t && t.following && !this.introPlaying && this.veh.has(t.id)) {
       const v = this.veh.get(t.id)!;
       if (!this.lastPan || this.lastPan[0] !== v.lng || this.lastPan[1] !== v.lat) {
         this.map!.jumpTo({ center: [v.lng, v.lat] });
@@ -264,20 +287,58 @@ class Engine {
     }
     this.lastPan = null;
     this.departing = false;
-    this.map?.jumpTo({ center: [v.lng, v.lat], zoom: TRACK_ZOOM });  // zoom in on the bus
+    this.arrivalAnnounced = false;                   // re-arm the arrival toast for this session
     this.setStopsVisible(false);                     // declutter: hide all other stops
     this.setSelStop(stop ?? null);                   // show only this one (glowing)
     this.previewVehId = null; this.previewArrival = null; this.previewStopId = null;
     this.drawTrackedRoute();
+    this.playTrackIntro(v, stop ?? null);            // 2s overview (bus + stop) → 1s fly into the bus
     this.store().set({
-      tracked: { route: this.tracked.route, stopName: this.tracked.stopName, following: true },
-      trackedPos: [v.lng, v.lat], popup: null,
+      tracked: this.trackedSummary(true),
+      trackedPos: [v.lng, v.lat], popup: null, arrivalNotice: null,
     });
     this.updateBubble();
     this.pushVehicles();
   }
 
+  // Cinematic track intro: frame the whole picture (bus + stop) for 2 s, then fly into the
+  // bus over 1 s and hand off to the follow-cam. introPlaying gates the per-frame follow so
+  // it can't fight the animation. Cancellable via clearIntro() (Exit / re-track mid-flight).
+  private playTrackIntro(v: VehState, stop: { lng: number; lat: number } | null) {
+    if (!this.map) return;
+    this.clearIntro();
+    this.introPlaying = true;
+    if (stop) {
+      const sw: [number, number] = [Math.min(v.lng, stop.lng), Math.min(v.lat, stop.lat)];
+      const ne: [number, number] = [Math.max(v.lng, stop.lng), Math.max(v.lat, stop.lat)];
+      this.map.fitBounds([sw, ne], {
+        // extra bottom room so the bus clears the (mobile) full-width track bar
+        padding: { top: 80, bottom: 120, left: 70, right: 70 },
+        maxZoom: 15, duration: 2000, essential: true,
+      });
+    } else {
+      this.map.easeTo({ center: [v.lng, v.lat], duration: 2000, essential: true });
+    }
+    // after the overview, fly into the bus (re-read its live position so it's current)
+    this.introTimers.push(window.setTimeout(() => {
+      const cur = this.tracked && this.veh.get(this.tracked.id);
+      if (!cur || !this.map) { this.introPlaying = false; return; }
+      this.map.flyTo({ center: [cur.lng, cur.lat], zoom: TRACK_ZOOM, duration: 1000, essential: true });
+      // hand off to the follow-cam once the fly-in lands
+      this.introTimers.push(window.setTimeout(() => {
+        this.introPlaying = false; this.lastPan = null;
+      }, 1000));
+    }, 2000));
+  }
+
+  private clearIntro() {
+    for (const id of this.introTimers) clearTimeout(id);
+    this.introTimers = [];
+    this.introPlaying = false;
+  }
+
   untrack(snapBack: boolean) {
+    this.clearIntro();                               // cancel any in-flight track intro
     this.setStopsVisible(true);
     this.clearSelStop();
     this.clearTrackedRoute();
@@ -297,13 +358,13 @@ class Engine {
   pauseFollow() {
     if (this.tracked && this.tracked.following) {
       this.tracked.following = false;
-      this.store().set({ tracked: { route: this.tracked.route, stopName: this.tracked.stopName, following: false } });
+      this.store().set({ tracked: this.trackedSummary(false) });
     }
   }
   resumeFollow() {
     if (this.tracked) {
       this.tracked.following = true; this.lastPan = null;
-      this.store().set({ tracked: { route: this.tracked.route, stopName: this.tracked.stopName, following: true } });
+      this.store().set({ tracked: this.trackedSummary(true) });
     }
   }
   stopTracking() { this.untrack(true); }
@@ -334,6 +395,15 @@ class Engine {
     if (!this.tracked || !this.veh.has(this.tracked.id)) { this.untrack(true); return; }
     const b = this.trackedBubble();
     this.store().set({ bubble: { text: b.text, late: b.late, dist: b.dist } });
+    // first time the bus reaches the stop → "<vehicle> has arrived at <stop>" toast (persists
+    // past untrack until the user closes it, so it's still readable after the bus departs).
+    if (b.state === 'due' && !this.arrivalAnnounced) {
+      this.arrivalAnnounced = true;
+      const label = this.veh.get(this.tracked.id)?.kind === 'train' ? 'CTrain' : 'Bus';
+      this.store().set({
+        arrivalNotice: `${label} ${this.tracked.id} has arrived at ${this.tracked.stopName || 'the stop'}`,
+      });
+    }
     if (b.state === 'departed' && !this.departing) {
       this.departing = true; setTimeout(() => this.untrack(true), 1500);
     }
@@ -390,13 +460,19 @@ class Engine {
     this.previewArrival = { trip_id: v.tripId, arrival: data.arrival!, route: data.route! };
     this.previewStopId = data.stop_id!;
     this.setSelStop(stop);
-    // frame the camera so BOTH the bus and its next stop are visible (extra top
-    // padding leaves room for the popup, which anchors above the stop).
+    // frame the camera so BOTH the bus and its next stop are visible, AND the whole ETA
+    // popup stays on-screen. The popup anchors ABOVE the stop (bottom anchor), ~260px wide:
+    // reserve a popup's height on top and a half-width on the sides. Clamp each pad to <38%
+    // of the container so on a small screen we never pass padding larger than the viewport
+    // (which makes fitBounds throw / over-zoom).
     const sw: [number, number] = [Math.min(v.lng, stop.lng), Math.min(v.lat, stop.lat)];
     const ne: [number, number] = [Math.max(v.lng, stop.lng), Math.max(v.lat, stop.lat)];
+    const cont = this.map?.getContainer();
+    const cw = cont?.clientWidth ?? 800, ch = cont?.clientHeight ?? 600;
+    const padX = Math.min(150, cw * 0.38), padY = Math.min(200, ch * 0.38);
     this.map?.fitBounds([sw, ne], {
-      padding: { top: 130, bottom: 60, left: 60, right: 60 },
-      maxZoom: 16, duration: 600,
+      padding: { top: padY, bottom: Math.min(80, ch * 0.38), left: padX, right: padX },
+      maxZoom: 16, duration: 700, essential: true,
     });
     // open the SAME popup as clicking the stop directly (its next-3 arrivals + Track),
     // anchored at the vehicle's next stop. The clicked bus appears in that list.
