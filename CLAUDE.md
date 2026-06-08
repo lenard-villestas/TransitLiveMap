@@ -9,11 +9,16 @@ anything so you don't undo a considered choice.
 
 ## Current state
 
-Phases 0–7 are complete and working. The app shows the live fleet with **top-down
-bus/train icons that rotate to their travel bearing** and **snap to / glide along the
-route polyline**; stops with live ETA popups; per-bus tracking (follow-cam + glow +
-anchored ETA/Late bubble + blue bus→stop route line); click-a-vehicle → its next stop +
-Track; route-number labels at zoom ≥ 16; and a geolocation "locate me" control.
+Phases 0–7 are complete and working; Phase 8 (Docker + free cloud deploy) is in place. The
+app shows the live fleet with **top-down bus/train icons that rotate to their travel bearing**
+and **snap to / glide along the route polyline** (icons shrink further when zoomed out so the
+glide reads); stops with live ETA popups; per-bus tracking (a **cinematic 2 s overview → 1 s
+fly-in** intro, then follow-cam + glow + anchored ETA/Late bubble + blue bus→stop route line);
+click-a-vehicle → its next stop + Track; route-number labels at zoom ≥ 16; a geolocation
+"locate me" control; a **red app header** (title + live clock + "Server: …" health) and a
+**"<vehicle> has arrived at <stop>" toast**. The React app is **mobile-hardened** (zoom-lock
+viewport, safe-area insets, bigger tap targets, full-width track bar) and **deploys as a single
+Docker container** (see Deployment below).
 
 **There are now TWO frontends, same backend JSON contract:**
 - **`frontend/`** — the original **Leaflet + vanilla ES-module** app (Phase 7.0). Still
@@ -75,8 +80,10 @@ TransitLiveMap/
 │       ├── config.ts types.ts store.ts (zustand)   main.tsx App.tsx
 │       ├── lib/    geometry.ts format.ts network.ts engine.ts (rAF snap-to-shape + tracking)
 │       ├── map/    MapView.tsx (the <Map> + sources/layers + popups) · layers.ts
-│       └── ui/     EtaRow · StopPopup · VehiclePopup · TrackBar · TrackBubble
+│       └── ui/     EtaRow · StopPopup · VehiclePopup · TrackBar · TrackBubble · AppBar · ArrivalToast
 ├── docs/                   code-reference.html + presentation.html (learning material)
+├── Dockerfile              multi-stage: node builds frontend-react/dist → python serves it + the API
+├── .dockerignore, render.yaml   container build context + Render free-tier Blueprint (Phase 8)
 ├── requirements.txt, CLAUDE.md, README.md, .gitignore
 ```
 
@@ -103,15 +110,26 @@ Same behaviours, MapLibre instead of Leaflet. **Two layers, kept apart:** the im
 old `vehicles.js`+`tracking.js`, and every frame writes a GeoJSON FeatureCollection into
 the **`vehicles`** map source via `setData` (plus `tracked-route`, `selstop`, `veh-halo`).
 **Never route the rAF loop through React state.** The reactive *chrome* lives in
-**`store.ts`** (zustand: `caption`, `zoom`, `tracked`, `bubble`, `trackedPos`, `popup`),
-updated at 1–5 Hz, and is rendered by small components (`TrackBar`, `EtaRow`, `StopPopup`,
-`VehiclePopup`, plus the bubble/popups inside `MapView`). The tracked-bus ETA bubble is
-isolated in its own **`TrackBubble`** component so the per-frame `trackedPos` updates only
-re-render it, not the whole chrome. `lib/network.ts` loads `/api/network` → GeoJSON + the
-`shapesById`/`stopById` lookups the engine needs. `map/layers.ts` holds the data-driven
-layer styles (stop `minzoom` declutter, the two zoom-gated vehicle layers, label
-`minzoom`). The popup Track buttons call `engine.*` **directly** — no `window.*` handlers,
-no HTML strings.
+**`store.ts`** (zustand: `caption`, `zoom`, `serverStatus`, `tracked`, `bubble`,
+`trackedPos`, `popup`, `arrivalNotice`), updated at 1–5 Hz, and is rendered by small
+components (`AppBar` (red header: title + live clock + `serverStatus`), `TrackBar`,
+`ArrivalToast`, `EtaRow`, `StopPopup`, `VehiclePopup`, plus the bubble/popups inside
+`MapView`). The tracked-bus ETA bubble is isolated in its own **`TrackBubble`** component so
+the per-frame `trackedPos` updates only re-render it, not the whole chrome. The track-bar
+heading (`"Following Bus 8280"`) comes from a single `engine.trackedSummary()` helper used at
+every `set({ tracked })` site so the fields never diverge; the arrival toast fires once per
+track session (`arrivalAnnounced`) when the bus first reaches `due`. `lib/network.ts` loads
+`/api/network` → GeoJSON + the `shapesById`/`stopById` lookups the engine needs.
+`map/layers.ts` holds the data-driven layer styles (stop `minzoom` declutter, the two
+zoom-gated vehicle layers whose `icon-size` shrinks with zoom, label `minzoom`). The popup
+Track buttons call `engine.*` **directly** — no `window.*` handlers, no HTML strings.
+
+**Track intro animation:** `track()` runs a cancellable two-phase camera move via
+`playTrackIntro()` — a 2 s `fitBounds` overview (bus + stop) then a 1 s `flyTo` into the bus
+— gated by an `introPlaying` flag so the per-frame follow-cam can't fight it; `clearIntro()`
+(called from `track()`/`untrack()`) cancels the timers on Exit/re-track. Stop clicks
+`easeTo` with a vertical offset to centre the popup; vehicle clicks use popup-aware,
+viewport-clamped `fitBounds` padding so the whole ETA popup stays on-screen.
 
 **Vehicle icons are top-down art, so they ARE rotated to the travel bearing.** Each vehicle
 feature carries `img` (the MapLibre image id — `'bus-default'` or `'train'`), `rotate`
@@ -310,6 +328,10 @@ into themed red counted badges; zooming in splits them into individual
 | 7.0 | Restructure → `backend/` + `frontend/` (HTML/CSS/ES-module split); server serves the frontend folder; `docs/` learning material | all |
 | 7 | **React + TS + MapLibre GL frontend** (`frontend-react/`): vector basemap, GPU GeoJSON layers, snap-to-shape rAF engine ported to `lib/engine.ts`, zustand chrome, React popups/track-bar; backend serves `dist/` when built (`FRONTEND_DIR` override). Same JSON contract. | `frontend-react/*`, `server.py` |
 | 7.1 | **Clean "Uber day" redesign** of the React app: Positron/`dataviz` basemap, **stops-at-z14 declutter** (dropped clustering) + **density-by-zoom vehicles** (rank sample + zoom-gated full layer); **top-down icons rotated to a per-frame bearing** (continuity-constrained, no flip); track-zoom 18; selected-stop pin = bigger + slow float + vehicle-style glow; `TrackBubble` isolated for smooth follow; red stop-popup header; bottom-right locate FAB + collapsible attribution. | `config.ts`, `engine.ts`, `layers.ts`, `MapView.tsx`, `index.css`, `App.tsx` |
+| 7.2 | **Mobile pass:** zoom-lock viewport + `viewport-fit=cover`, safe-area insets, bigger tap targets, overscroll/tap-flash hardening, phone-only layout (hide zoom control/`#zoomcap`, full-width track bar, lifted locate FAB). | `index.html`, `index.css` |
+| 7.3 | **Camera + track-bar redesign:** stop-click `easeTo` centres the popup; vehicle-click popup-aware clamped `fitBounds`; **cinematic 2 s overview → 1 s fly-in track intro** (`introPlaying` gate, cancellable); track bar = `"Following Bus <id>"` heading + always-visible blue equal-width Follow/Exit; zoom-out `icon-size` shrink so the glide reads. | `engine.ts`, `store.ts`, `MapView.tsx`, `TrackBar.tsx`, `layers.ts`, `index.css` |
+| 7.4 | **Red app header** (`AppBar`: title + 1 Hz live clock + `Server: <status>` from snapshot age) and **`ArrivalToast`** ("<Bus\|CTrain> <id> has arrived at <stop>", X to close); map dropped below the header via `--appbar-total` (incl. notch safe-area). | `AppBar.tsx`, `ArrivalToast.tsx`, `store.ts`, `engine.ts`, `App.tsx`, `index.css` |
+| 8 | **Docker + free cloud deploy:** multi-stage `Dockerfile` (node builds `dist` → python serves bundle + API, binds `$PORT`), `.dockerignore`, `render.yaml` Blueprint (free Docker web service, auto-deploy on push). Single-origin → one container, no separate frontend host. | `Dockerfile`, `.dockerignore`, `render.yaml`, `README.md` |
 
 Phase 5 implementation notes:
 - **"Nearest vehicle" = soonest predicted arrival**, NOT geographically closest
@@ -328,16 +350,42 @@ Phase 5 implementation notes:
 > Python). Remaining Phase 7 polish if desired: code-split the 1 MB maplibre-gl chunk, then
 > retire `frontend/` once the React app is signed off.
 
-### Phase 8 — Docker + docker-compose
-Containerize backend (Python/FastAPI), frontend (Nginx or Vite build),
-PostGIS (for future spatial queries + history). Local dev via `docker compose up`.
-Same containers deploy to cloud (Fly.io / Render / AWS ECS).
+### Phase 8 — Docker + cloud deploy ✅ (single-container path done)
+**Done:** because the app is **single-origin** (uvicorn serves the React `dist/` *and* the
+`/api/*` JSON), it ships as **one container** — a multi-stage `Dockerfile` (node builds the
+bundle → python serves it, binds `0.0.0.0:$PORT`) plus a `render.yaml` Blueprint for a free
+Render Docker web service that **auto-deploys on push**. Local: `docker build -t transit . &&
+docker run -p 8000:8000 -e PORT=8000 transit`. See the **Deployment** notes below + README.
+> Free-tier caveat: the instance sleeps when idle; the first hit cold-starts (re-downloads
+> static GTFS, restarts the 15 s poll) and fills in over a few seconds — the header's
+> "Server: …" status surfaces this. ~512 MB RAM holds the in-memory GTFS; watch for OOM.
 
-### Phase 9 — Cloud deployment
-Deploy the Docker stack. Recommended starting point: Fly.io or Render for
-the backend container, Cloudflare Pages for the static frontend, Neon/Supabase
-for managed PostGIS. Add AWS (ECS + RDS) as a re-deployment to get the resume
-line, once the app is stable.
+**Not done (future):** multi-service `docker compose` (separate web/PostGIS), PostGIS for
+history/spatial queries, on-disk GTFS cache so restarts don't re-download.
+
+### Phase 9 — Bigger cloud / data (optional, for the resume line)
+Add managed **PostGIS** (Neon/Supabase) for vehicle history + spatial queries; optionally
+re-deploy to **AWS (ECS + RDS)** once stable. A CDN-split frontend (Cloudflare Pages/Vercel)
+would need a `VITE_API_BASE` + CORS tweak (today the frontend is same-origin, `API=''`).
+
+---
+
+## Deployment
+
+- **Shape:** one always-on web service. `Dockerfile` stage 1 (`node:22-slim`) runs `npm ci &&
+  npm run build`; stage 2 (`python:3.12-slim`) installs `requirements.txt`, copies `backend/`
+  + the built `frontend-react/dist`, and runs
+  `uvicorn server:app --app-dir backend --host 0.0.0.0 --port $PORT`. Image layout keeps
+  `/app/backend` + `/app/frontend-react/dist` so `server.py`'s `ROOT`/`REACT_DIST` resolve.
+- **Render:** `render.yaml` Blueprint (`type: web`, `runtime: docker`, `plan: free`,
+  `healthCheckPath: /api/vehicles`, `autoDeploy: true`). Dashboard → New → Blueprint → connect
+  repo → Apply. `dist/` is gitignored, so the **image builds it** — never commit `dist/`.
+- **Basemap:** deployed build uses the **keyless OpenFreeMap** fallback (no `VITE_MAPTILER_KEY`
+  → no build arg). To use MapTiler in prod, pass the key as a Docker build arg before
+  `npm run build`.
+- **Still `allow_origins=["*"]`** and **`Cache-Control: no-store` on every response** — both
+  intentional/acceptable for now; tighten CORS and stop no-storing hashed assets if/when the
+  app gets real traffic.
 
 ---
 

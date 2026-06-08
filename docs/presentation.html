@@ -336,9 +336,13 @@
           camera, a clean Positron basemap, zoom-based declutter, and data-driven icons that
           rotate to their bearing. The JSON API stayed identical, so only the renderer
           changed.</p></div>
-      <div class="card"><h3 style="margin-top:8px">Docker + cloud</h3>
-        <p>Containerise the backend + frontend, add PostGIS for history/spatial queries,
-          deploy to Fly.io / Render.</p></div>
+      <div class="card"><h3 style="margin-top:8px; color:var(--green)">Docker + cloud ✓ done</h3>
+        <p>Because the app is single-origin (one server serves the bundle + the API), it ships
+          as one multi-stage Docker image — Node builds the frontend, Python serves it — and
+          auto-deploys free on Render from a <code>render.yaml</code> Blueprint.</p></div>
+      <div class="card"><h3 style="margin-top:8px">PostGIS + history</h3>
+        <p>Add a managed PostGIS database to log vehicle positions over time for spatial
+          queries, replays, and on-time analytics.</p></div>
     </div>
   </section>
 
