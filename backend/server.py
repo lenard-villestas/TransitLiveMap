@@ -146,16 +146,13 @@ origins = [o.strip() for o in os.environ.get("ALLOWED_ORIGINS", "*").split(",") 
 app.add_middleware(CORSMiddleware, allow_origins=origins,
                    allow_methods=["*"], allow_headers=["*"])
 
-# Which frontend to serve:
-#   - the React/MapLibre build (frontend-react/dist) once it's been built, else
-#   - the original Leaflet app (frontend/) as a fallback.
-# Override explicitly with the FRONTEND_DIR env var (e.g. to force the Leaflet app).
+# Serve the built React/MapLibre frontend (frontend-react/dist) once it's been built.
+# Override the location with the FRONTEND_DIR env var. In dev you typically run the
+# Vite dev server (which proxies /api here), so a build may not exist yet — in that
+# case we mount nothing and serve the API only (see the conditional mount below).
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 REACT_DIST = os.path.join(ROOT, "frontend-react", "dist")
-LEAFLET_DIR = os.path.join(ROOT, "frontend")
-FRONTEND_DIR = os.environ.get("FRONTEND_DIR") or (
-    REACT_DIST if os.path.isdir(REACT_DIST) else LEAFLET_DIR)
-print(f"[startup] serving frontend from {FRONTEND_DIR}")
+FRONTEND_DIR = os.environ.get("FRONTEND_DIR") or REACT_DIST
 
 
 @app.middleware("http")
@@ -243,7 +240,13 @@ def trip_next_stop(trip_id: str):
     }
 
 
-# Serve the whole frontend folder (index.html at /, plus /styles, /scripts, /static).
-# Mounted LAST so the /api/* routes above take precedence; html=True serves index.html
-# for "/". no-store comes from the middleware above.
-app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")
+# Serve the built frontend (index.html at /, plus its hashed assets). Mounted LAST so
+# the /api/* routes above take precedence; html=True serves index.html for "/".
+# Skip the mount when there's no build yet (e.g. dev via the Vite server) so uvicorn
+# still boots and answers /api/*. no-store comes from the middleware above.
+if os.path.isdir(FRONTEND_DIR):
+    print(f"[startup] serving frontend from {FRONTEND_DIR}")
+    app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")
+else:
+    print(f"[startup] no built frontend at {FRONTEND_DIR} — serving API only "
+          f"(run `npm run build`, or use the Vite dev server which proxies /api here).")

@@ -6,11 +6,9 @@ along their route shapes (rotating to their travel bearing), stops and ETAs appe
 zoom in, and you can track any bus to its next stop with a follow-cam and a live ETA/Late
 countdown.
 
-There are **two interchangeable frontends** on the same backend JSON API:
-- **`frontend-react/`** — the current **React + TypeScript + MapLibre GL** app: a clean,
-  light Positron-style vector basemap with GPU layers, decluttered for an "Uber day" look
-  (stops at zoom ≥ 14, vehicles density-gated by zoom).
-- **`frontend/`** — the original **Leaflet + vanilla ES modules** app (kept as a fallback).
+The frontend (**`frontend-react/`**) is a **React + TypeScript + MapLibre GL** app: a clean,
+light Positron-style vector basemap with GPU layers, decluttered for an "Uber day" look
+(stops at zoom ≥ 14, vehicles density-gated by zoom).
 
 ## Quick start
 
@@ -30,9 +28,10 @@ npm run dev                        # Vite on http://localhost:5173 (proxies /api
 cd frontend-react && npm run build
 ```
 
-The backend serves `frontend-react/dist/` once it's been built, otherwise the Leaflet
-`frontend/`. Force one with the `FRONTEND_DIR` env var. On first start it downloads
-Calgary's static GTFS (a few seconds), then polls the live feeds every 15 s.
+The backend serves `frontend-react/dist/` once it's been built (override the location with
+the `FRONTEND_DIR` env var); without a build it serves the API only, which is what the Vite
+dev server above proxies to. On first start it downloads Calgary's static GTFS (a few
+seconds), then polls the live feeds every 15 s.
 
 Optional: put a free [MapTiler](https://www.maptiler.com/) key in `frontend-react/.env`
 as `VITE_MAPTILER_KEY=…`. Left blank, the app uses the keyless OpenFreeMap basemap.
@@ -70,7 +69,6 @@ mitigations are in [`docs/documentation.html`](docs/documentation.html).
 ```
 backend/         FastAPI app (server.py) + GTFS tools (build_map, explore_feed, verify_join)
 frontend-react/  React + TS + MapLibre app (src/: config, store, lib/engine, map/, ui/)
-frontend/        legacy Leaflet app: index.html + styles/app.css + scripts/ (ES modules)
 docs/            documentation.html   (overview, architecture, API, deployment)
 ```
 

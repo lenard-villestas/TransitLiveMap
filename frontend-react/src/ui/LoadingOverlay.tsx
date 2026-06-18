@@ -28,7 +28,7 @@ export function LoadingOverlay() {
   const hint = down
     ? 'Server unavailable — retrying…'
     : slow
-      ? 'The server is waking up — this can take up to a minute on the free tier.'
+      ? 'The server is waking up — this can take up to a minute (cold start).'
       : 'Fetching the live fleet…';
 
   return (

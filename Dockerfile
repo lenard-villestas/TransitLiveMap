@@ -23,7 +23,7 @@ COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
 # backend code + the built frontend (server.py resolves ROOT=/app →
-# REACT_DIST=/app/frontend-react/dist, so it serves React, not the Leaflet fallback)
+# REACT_DIST=/app/frontend-react/dist, the directory it serves)
 COPY backend/ ./backend/
 COPY --from=build /app/frontend-react/dist ./frontend-react/dist
 
