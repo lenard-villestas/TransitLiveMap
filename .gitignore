@@ -12,5 +12,10 @@ node_modules/
 frontend-react/dist/
 
 CLAUDE.node
-docs\code-reference.html
-docs\presentation.html
+
+# Internal design brief / AI-assistant notes — kept local, not published.
+CLAUDE.md
+
+# Generated learning docs (the committed public doc is docs/documentation.html).
+docs/code-reference.html
+docs/presentation.html

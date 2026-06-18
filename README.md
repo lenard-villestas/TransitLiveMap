@@ -55,7 +55,15 @@ Blueprint. In the Render dashboard → **New → Blueprint** → connect this re
 Render builds the Dockerfile and gives you a `https://…onrender.com` URL; every push to
 `master` redeploys automatically. The free instance sleeps when idle, so the first visit
 after a nap cold-starts (~30–60 s, re-downloading Calgary's static GTFS) before the live
-map fills in.
+map fills in. While that happens the app shows a loading overlay.
+
+**Split deployment (frontend on a CDN, backend as an API).** The frontend is a static bundle
+and the backend a plain JSON API, so they can be hosted separately — recommended for a free
+tier, since a CDN-hosted frontend loads instantly while only the data waits for the backend to
+wake. Set `VITE_API_BASE` (frontend build) to the backend's origin and `ALLOWED_ORIGINS`
+(backend env) to the frontend's origin; both default to single-origin behaviour when unset
+(see [`frontend-react/.env.example`](frontend-react/.env.example)). Full steps and cold-start
+mitigations are in [`docs/documentation.html`](docs/documentation.html).
 
 ## Project layout
 
@@ -63,18 +71,13 @@ map fills in.
 backend/         FastAPI app (server.py) + GTFS tools (build_map, explore_feed, verify_join)
 frontend-react/  React + TS + MapLibre app (src/: config, store, lib/engine, map/, ui/)
 frontend/        legacy Leaflet app: index.html + styles/app.css + scripts/ (ES modules)
-docs/            code-reference.html  (technical reference)
-                 presentation.html    (illustrated "how it works" for learning)
+docs/            documentation.html   (overview, architecture, API, deployment)
 ```
 
 ## Learn how it works
 
-- **`docs/presentation.html`** — an illustrated walkthrough of the stack, architecture,
-  data, and the GIS techniques (snap-to-shape, clustering, interpolation). Open it in a
-  browser.
-- **`docs/code-reference.html`** — a technical reference of every endpoint, data
-  contract, and frontend module.
-- **`CLAUDE.md`** — the deep design brief and the empirical Calgary-feed findings.
+- **[`docs/documentation.html`](docs/documentation.html)** — overview, architecture, the API
+  reference, deployment (single-origin and split), and the data sources. Open it in a browser.
 
 ## Exploration tools
 
@@ -96,3 +99,8 @@ python backend/verify_join.py         # trip_id → route join coverage check
 Download pattern: `https://data.calgary.ca/download/<dataset>/application%2Foctet-stream`
 (static GTFS uses `.../application%2Fzip`). Info page:
 https://data.calgary.ca/stories/s/u45n-7awa/
+
+## License
+
+Released under the [MIT License](LICENSE). Transit data © Calgary Open Data; basemap data
+© OpenStreetMap contributors (served via OpenFreeMap / MapTiler).

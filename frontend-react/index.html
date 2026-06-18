@@ -4,8 +4,29 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <title>Calgary Transit — live</title>
+    <!-- Instant pre-JS splash: shown the moment the page loads, before the (~1 MB)
+         app bundle parses. main.tsx removes it once React has mounted; the React
+         LoadingOverlay then covers the wait for live data. -->
+    <style>
+      #boot-splash {
+        position: fixed; inset: 0; z-index: 2000;
+        display: flex; flex-direction: column; align-items: center; justify-content: center;
+        gap: 12px; background: #f7f7f5; font-family: system-ui, sans-serif;
+      }
+      #boot-splash .bs-spin {
+        width: 34px; height: 34px; border-radius: 50%;
+        border: 3px solid #f1d5d5; border-top-color: #dc2626;
+        animation: bs-spin .8s linear infinite;
+      }
+      #boot-splash .bs-text { font-size: 13px; color: #64748b; }
+      @keyframes bs-spin { to { transform: rotate(360deg); } }
+    </style>
   </head>
   <body>
+    <div id="boot-splash">
+      <div class="bs-spin"></div>
+      <div class="bs-text">Loading Calgary Transit Live Map…</div>
+    </div>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

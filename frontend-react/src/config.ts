@@ -1,10 +1,13 @@
 // Tunable constants + the vehicle-icon table + the basemap style URL.
 // Ported from the Leaflet app's config.js (Phase 7).
 
-export const API = '';                     // same-origin; the Vite dev proxy forwards /api → :8000
+// Backend API base. Blank = same-origin (the default; the Vite dev proxy forwards
+// /api → :8000, and in production uvicorn serves this bundle itself). Set
+// VITE_API_BASE at build time to point the frontend at a separately-hosted backend
+// (see .env.example) — the trailing slash is trimmed so `API + '/api/…'` stays clean.
+export const API = (import.meta.env.VITE_API_BASE ?? '').replace(/\/$/, '');
 export const REFRESH_MS = 15000;           // how often we re-poll /api/vehicles
 
-export const CLUSTER_MAX_ZOOM = 15;        // (legacy) kept for reference; clustering removed for the clean look
 export const STOP_MINZOOM = 14;            // stops (pins) only appear at/above this zoom (declutter; tunable)
 export const VEH_OVERVIEW_FRACTION = 0.18; // fraction of vehicles shown when zoomed out (activity overview)
 export const VEH_ALL_ZOOM = 13;            // at/above this zoom, ALL vehicles show (below: just the sample)

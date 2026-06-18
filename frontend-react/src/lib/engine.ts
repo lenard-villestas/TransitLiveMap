@@ -146,6 +146,9 @@ class Engine {
     this.store().set({
       caption: `${data.vehicles.length} vehicles · snapshot ${data.age}s old · refreshed ${new Date().toLocaleTimeString()}`,
       serverStatus: this.serverStatusFor(data.age),
+      // a non-null age means the backend has produced at least one live snapshot →
+      // it's awake and serving data, so drop the loading overlay.
+      ...(data.age != null ? { booting: false } : {}),
     });
     this.pushVehicles();
   }
@@ -243,12 +246,9 @@ class Engine {
     const feats: Feature<Point>[] = [];
     for (const v of this.veh.values()) {
       if (t && v.id !== t.id) continue;             // hide other buses while tracking
-      // side-view icon: pick the mirrored variant when travelling west (bearing
-      // 180–360) so the bus faces its direction of travel but stays upright.
-      // ICONS[kind].image is the registered image id (namespaced to dodge the
-      // basemap sprite's own 'bus' glyph).
       // rotate the icon so its nose points along the travel bearing (forward = the
-      // compass dir the art faces at rest); replaces the old east/west mirror.
+      // compass dir the top-down art faces at rest). ICONS[kind].image is the
+      // registered image id (namespaced to dodge the basemap sprite's own 'bus' glyph).
       const img = ICONS[v.kind].image;
       const rotate = (v.bearing - ICONS[v.kind].forward + 360) % 360;
       // tracked bus → rank 0 so it's always in the overview sample (never vanishes zoomed out)

@@ -57,11 +57,11 @@ function knockOutLightBg(ctx: CanvasRenderingContext2D, w: number, h: number) {
   ctx.putImageData(id, 0, 0);
 }
 
-// Prepare a loaded image for the style: knock out a light background, downscale to
-// ICON_MAX_W (only shrinks), and optionally mirror it (the '-flip' variants).
+// Prepare a loaded image for the style: knock out a light background, then downscale
+// to ICON_MAX_W (only shrinks). Icons are now rotated to the travel bearing in the
+// layer style, so no mirrored variants are needed.
 function prepImage(
   img: CanvasImageSource & { width: number; height: number },
-  flip: boolean,
 ): ImageData | null {
   const w0 = img.width, h0 = img.height;
   if (!w0 || !h0) return null;
@@ -72,7 +72,7 @@ function prepImage(
   if (!fctx) return null;
   fctx.drawImage(img, 0, 0);
   knockOutLightBg(fctx, w0, h0);
-  // 2) downscale (cap the LARGER dimension, so tall/long art shrinks too) + optional mirror
+  // 2) downscale (cap the LARGER dimension, so tall/long art shrinks too)
   const scale = Math.min(1, ICON_MAX_W / Math.max(w0, h0));
   const w = Math.max(1, Math.round(w0 * scale));
   const h = Math.max(1, Math.round(h0 * scale));
@@ -80,7 +80,6 @@ function prepImage(
   out.width = w; out.height = h;
   const octx = out.getContext('2d');
   if (!octx) return null;
-  if (flip) { octx.translate(w, 0); octx.scale(-1, 1); }
   octx.drawImage(full, 0, 0, w, h);
   return octx.getImageData(0, 0, w, h);
 }
@@ -116,17 +115,17 @@ export function MapView() {
 
   const onLoad = (e: MapEvent) => {
     const map = e.target as MlMap;
-    // Register each icon, plus a mirrored '<id>-flip' variant for the vehicles.
+    // Register each vehicle/stop PNG into the style (knocking out its light background
+    // and downscaling) the first time it's needed.
     const ensureIcon = (id: string) => {
       if (map.hasImage(id)) return;
-      const flip = id.endsWith('-flip');
-      const url = ICON_FILES[flip ? id.slice(0, -5) : id];
+      const url = ICON_FILES[id];
       if (!url) return;
       map.loadImage(url)
         .then((img) => {
           if (!img || map.hasImage(id)) return;
           const raw = img.data as HTMLImageElement | ImageBitmap;
-          const data = prepImage(raw, flip);
+          const data = prepImage(raw);
           if (data) map.addImage(id, data);
         })
         .catch(() => {});

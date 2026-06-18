@@ -6,6 +6,7 @@ import { MapView } from './map/MapView';
 import { TrackBar } from './ui/TrackBar';
 import { AppBar } from './ui/AppBar';
 import { ArrivalToast } from './ui/ArrivalToast';
+import { LoadingOverlay } from './ui/LoadingOverlay';
 import { useStore } from './store';
 import { ATTRIBUTION } from './config';
 
@@ -16,6 +17,7 @@ export default function App() {
     <>
       <AppBar />
       <MapView />
+      <LoadingOverlay />
       <ArrivalToast />
       {showInfo && (
         <div id="infopanel">

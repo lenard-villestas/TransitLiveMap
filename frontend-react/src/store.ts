@@ -27,6 +27,7 @@ export type PopupState = StopPopupState | VehiclePopupState | null;
 interface AppState {
   caption: string;
   zoom: number;
+  booting: boolean;                 // true until the first live snapshot arrives → drives the loading overlay
   serverStatus: string;             // header "Server: …" health (Good / Delayed / Stale / Down)
   tracked: TrackedSummary | null;   // drives the track bar (visibility + text)
   bubble: BubbleInfo | null;        // 1 Hz ETA/Late text for bubble + track bar
@@ -39,6 +40,7 @@ interface AppState {
 export const useStore = create<AppState>((set) => ({
   caption: 'loading…',
   zoom: 11,
+  booting: true,
   serverStatus: 'Connecting…',
   tracked: null,
   bubble: null,

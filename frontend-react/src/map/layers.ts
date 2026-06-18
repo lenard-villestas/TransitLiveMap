@@ -97,9 +97,9 @@ export const vehHaloLayer = {
   },
 } as LayerProps;
 
-// the vehicles themselves: side-view art, so we DON'T rotate (that tips the wheels
-// over). The `img` property is the icon name already chosen by travel direction —
-// e.g. 'bus' (faces east) or 'bus-flip' (mirrored, faces west) — kept upright.
+// the vehicles themselves: top-down art rotated to the travel bearing via the per-
+// feature `rotate` property (icon-rotate + map-aligned rotation). `img` is the
+// registered image id ('bus-default' or 'train').
 //
 // Density-by-zoom: each vehicle carries a stable `rank` ∈ [0,1). The OVERVIEW layer
 // always draws the low-rank sample (an activity overview when zoomed out); the FULL

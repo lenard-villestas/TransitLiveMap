@@ -138,8 +138,12 @@ async def lifespan(app):
 
 app = FastAPI(lifespan=lifespan)
 
-# Allow a separately-hosted frontend (e.g. Vite on :5173) to call us later.
-app.add_middleware(CORSMiddleware, allow_origins=["*"],
+# CORS for a separately-hosted frontend (e.g. Vite on :5173, or a CDN-deployed
+# bundle calling this API cross-origin). Defaults to "*" so same-origin and local
+# dev work out of the box; in a split deployment set ALLOWED_ORIGINS to the
+# frontend's origin(s), comma-separated, to lock it down.
+origins = [o.strip() for o in os.environ.get("ALLOWED_ORIGINS", "*").split(",") if o.strip()]
+app.add_middleware(CORSMiddleware, allow_origins=origins,
                    allow_methods=["*"], allow_headers=["*"])
 
 # Which frontend to serve:
@@ -156,7 +160,13 @@ print(f"[startup] serving frontend from {FRONTEND_DIR}")
 
 @app.middleware("http")
 async def no_store(request, call_next):
-    """Dev convenience: never cache, so edits to html/css/js/icons always reload."""
+    """Send Cache-Control: no-store on every response.
+
+    Intentional: the live vehicle JSON must never be cached, and during development
+    it also keeps html/css/js/icons fresh on every reload. Tradeoff for a higher-
+    traffic deploy: stop no-storing the hashed static assets (they're immutable) and
+    only no-store the /api/* responses.
+    """
     resp = await call_next(request)
     resp.headers["Cache-Control"] = "no-store"
     return resp
