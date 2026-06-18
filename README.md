@@ -56,13 +56,19 @@ Render builds the Dockerfile and gives you a `https://…onrender.com` URL; ever
 after a nap cold-starts (~30–60 s, re-downloading Calgary's static GTFS) before the live
 map fills in. While that happens the app shows a loading overlay.
 
-**Split deployment (frontend on a CDN, backend as an API).** The frontend is a static bundle
-and the backend a plain JSON API, so they can be hosted separately — recommended for a free
-tier, since a CDN-hosted frontend loads instantly while only the data waits for the backend to
-wake. Set `VITE_API_BASE` (frontend build) to the backend's origin and `ALLOWED_ORIGINS`
-(backend env) to the frontend's origin; both default to single-origin behaviour when unset
-(see [`frontend-react/.env.example`](frontend-react/.env.example)). Full steps and cold-start
-mitigations are in [`docs/documentation.html`](docs/documentation.html).
+**Split deployment (frontend on Vercel, backend API on Render).** The frontend is a static
+bundle and the backend a plain JSON API, so they can be hosted separately — recommended on a
+free tier, since the CDN frontend loads instantly while only the data waits for the backend to
+wake. Point the frontend at the backend with `VITE_API_BASE` (set on Vercel; root directory
+`frontend-react`) and allow it through CORS with `ALLOWED_ORIGINS` (set on Render); both default
+to single-origin behaviour when unset (see [`frontend-react/.env.example`](frontend-react/.env.example)).
+Render keeps serving its own full copy of the app as a harmless fallback — just share the Vercel
+URL. Full steps + cold-start mitigations: [`docs/documentation.html`](docs/documentation.html).
+
+> **Deploy gotcha:** the Docker build runs `npm ci`, which fails unless
+> `frontend-react/package-lock.json` is in sync with `package.json`. A local `npm run build`
+> can pass with a stale lockfile; the build can't. Run `npm install` and commit the updated
+> lockfile in the same change.
 
 ## Project layout
 

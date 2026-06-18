@@ -116,21 +116,49 @@ npm run build</pre>
   <pre>docker build -t transit .
 docker run --rm -p 8000:8000 -e PORT=8000 transit   # http://localhost:8000</pre>
 
-  <h3>Split: frontend on a CDN, backend as an API</h3>
+  <p class="note">
+    <strong>Docker build gotcha:</strong> the image runs <code>npm ci</code>, which fails the
+    whole build unless <code>package-lock.json</code> is exactly in sync with
+    <code>package.json</code>. A local <code>npm run build</code> can pass with a stale lockfile
+    (it reuses <code>node_modules</code>), but the Docker / Render build won't — always run
+    <code>npm install</code> and commit the updated lockfile in the same change.
+  </p>
+
+  <h3>Split: frontend on Vercel, backend (API) on Render</h3>
   <p>
     Because the frontend is a static bundle and the backend is a plain JSON API, the two can be
-    hosted separately. This is the recommended setup for a free tier, since a CDN-hosted
-    frontend loads instantly while only the data waits for the backend to wake.
+    hosted separately — recommended on a free tier, since a CDN-hosted frontend loads instantly
+    while only the live data waits for the backend to wake. The deployed setup uses
+    <strong>Vercel</strong> for the frontend and <strong>Render</strong> for the API, wired by
+    two environment variables:
   </p>
-  <ul>
-    <li><strong>Frontend</strong> → a static host (Cloudflare Pages, Vercel, Netlify, GitHub
-      Pages). Root <code>frontend-react</code>, build <code>npm run build</code>, output
-      <code>dist</code>. Set <code>VITE_API_BASE</code> to the backend's origin (no trailing
-      slash) at build time.</li>
-    <li><strong>Backend</strong> → an API-only service (Render, Fly.io, Railway). Set
-      <code>ALLOWED_ORIGINS</code> to the frontend's origin(s), comma-separated, to lock down
-      CORS. Left unset it defaults to <code>*</code>, so single-origin keeps working unchanged.</li>
-  </ul>
+  <table>
+    <thead><tr><th>Variable</th><th>Set on</th><th>Purpose</th></tr></thead>
+    <tbody>
+      <tr><td><code>VITE_API_BASE</code></td><td>Vercel (build time)</td>
+        <td>Backend origin the frontend calls (e.g. <code>https://&lt;app&gt;.onrender.com</code>, no
+          trailing slash). Inlined at build time → redeploy Vercel to change it.</td></tr>
+      <tr><td><code>ALLOWED_ORIGINS</code></td><td>Render</td>
+        <td>Comma-separated CORS allow-list (your Vercel origin). Unset → <code>*</code> (open), so
+          the split works even before you set it; set it to lock down to your site.</td></tr>
+    </tbody>
+  </table>
+  <ol>
+    <li><strong>Frontend → Vercel:</strong> import the repo, set <em>Root Directory</em> =
+      <code>frontend-react</code> (Vite auto-detected; build <code>npm run build</code>, output
+      <code>dist</code>), add <code>VITE_API_BASE</code> (+ optional
+      <code>VITE_MAPTILER_KEY</code>), deploy. Any static host works (Netlify, Cloudflare Pages,
+      …); on a project <em>subpath</em> you'd also set a Vite <code>base</code>.</li>
+    <li><strong>Backend → Render:</strong> the existing <code>render.yaml</code> service is the
+      API host as-is — no code change needed. Optionally add <code>ALLOWED_ORIGINS</code> = your
+      Vercel origin to lock down CORS.</li>
+  </ol>
+  <p>
+    Render keeps building and serving its <em>own</em> full copy of the app at the
+    <code>onrender.com</code> URL — harmless. Share the Vercel URL publicly; the Render copy
+    doubles as a fallback. (Trimming the Dockerfile's Node stage would make Render API-only, but
+    that's optional.)
+  </p>
 
   <h3>Cold-start mitigations (free tier)</h3>
   <p>Free instances sleep when idle; the first request after a nap wakes the backend
