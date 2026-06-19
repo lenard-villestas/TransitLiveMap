@@ -1,13 +1,13 @@
 # Calgary Transit Live Tracker
 
-A live web map that tracks Calgary Transit buses and CTrains in real time — built as
+A live web map that tracks Calgary Transit buses with live GPS location updates in real time — built as
 a GIS portfolio project with a **Python/FastAPI** backend. Vehicles snap to and glide
 along their route shapes (rotating to their travel bearing), stops and ETAs appear as you
 zoom in, and you can track any bus to its next stop with a follow-cam and a live ETA/Late
 countdown.
 
 The frontend (**`frontend-react/`**) is a **React + TypeScript + MapLibre GL** app: a clean,
-light Positron-style vector basemap with GPU layers, decluttered for an "Uber day" look
+light Positron-style vector basemap with GPU layers, decluttered for an minimal look
 (stops at zoom ≥ 14, vehicles density-gated by zoom).
 
 ## Quick start
@@ -36,39 +36,6 @@ seconds), then polls the live feeds every 15 s.
 Optional: put a free [MapTiler](https://www.maptiler.com/) key in `frontend-react/.env`
 as `VITE_MAPTILER_KEY=…`. Left blank, the app uses the keyless OpenFreeMap basemap.
 
-## Deploy
-
-The app is **single-origin** — one FastAPI process serves both the `/api/*` JSON and the
-built React bundle — so it deploys as a single container. The included multi-stage
-[`Dockerfile`](Dockerfile) builds the frontend with Node and serves it with Python; it binds
-`0.0.0.0:$PORT`, so it runs on any container host.
-
-```bash
-# build + run the production image locally
-docker build -t transit .
-docker run --rm -p 8000:8000 -e PORT=8000 transit   # → http://localhost:8000
-```
-
-**Render (free, auto-deploy from GitHub):** the repo ships a [`render.yaml`](render.yaml)
-Blueprint. In the Render dashboard → **New → Blueprint** → connect this repo → **Apply**.
-Render builds the Dockerfile and gives you a `https://…onrender.com` URL; every push to
-`master` redeploys automatically. The free instance sleeps when idle, so the first visit
-after a nap cold-starts (~30–60 s, re-downloading Calgary's static GTFS) before the live
-map fills in. While that happens the app shows a loading overlay.
-
-**Split deployment (frontend on Vercel, backend API on Render).** The frontend is a static
-bundle and the backend a plain JSON API, so they can be hosted separately — recommended on a
-free tier, since the CDN frontend loads instantly while only the data waits for the backend to
-wake. Point the frontend at the backend with `VITE_API_BASE` (set on Vercel; root directory
-`frontend-react`) and allow it through CORS with `ALLOWED_ORIGINS` (set on Render); both default
-to single-origin behaviour when unset (see [`frontend-react/.env.example`](frontend-react/.env.example)).
-Render keeps serving its own full copy of the app as a harmless fallback — just share the Vercel
-URL. Full steps + cold-start mitigations: [`docs/documentation.html`](docs/documentation.html).
-
-> **Deploy gotcha:** the Docker build runs `npm ci`, which fails unless
-> `frontend-react/package-lock.json` is in sync with `package.json`. A local `npm run build`
-> can pass with a stale lockfile; the build can't. Run `npm install` and commit the updated
-> lockfile in the same change.
 
 ## Project layout
 
