@@ -1,6 +1,6 @@
 # Calgary Transit Live Tracker
 
-A live web map that tracks Calgary Transit buses with live GPS location updates in real time — built as
+A live web map that tracks Calgary Transit buses with live GPS location updates in real time. Built as
 a GIS portfolio project with a **Python/FastAPI** backend. Vehicles snap to and glide
 along their route shapes (rotating to their travel bearing), stops and ETAs appear as you
 zoom in, and you can track any bus to its next stop with a follow-cam and a live ETA/Late
